@@ -1,11 +1,13 @@
 {
   "_comment": "AUTO-GENERATED — do not edit by hand. Run: npm run brands OR push to trigger GitHub Action.",
-  "_generated": "2026-03-02T15:00:34.097Z",
+  "_generated": "2026-03-02T18:33:24.168Z",
   "brands": [
     "default",
     "fmcg",
+    "magickingdom",
     "mcdo",
     "mondelez",
+    "spaceopera",
     "spacetech",
     "watch"
   ]
