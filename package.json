@@ -1,0 +1,13 @@
+{
+  "name": "plasma-sheet-defense",
+  "version": "1.0.0",
+  "description": "Plasma Sheet Defense — Modular Brand World Engine",
+  "private": true,
+  "scripts": {
+    "brands": "node scripts/gen-manifest.js",
+    "serve": "npx serve . -p 8080"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

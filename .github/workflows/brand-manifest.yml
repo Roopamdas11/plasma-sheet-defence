@@ -1,0 +1,41 @@
+name: Regenerate Brand Manifest
+
+# Triggers on any push that touches a brand file
+on:
+  push:
+    paths:
+      - 'brands/**.brand.js'
+      - 'scripts/gen-manifest.js'
+
+jobs:
+  gen-manifest:
+    runs-on: ubuntu-latest
+    # Skip if the commit was already made by this action (prevents infinite loop)
+    if: github.actor != 'github-actions[bot]'
+
+    permissions:
+      contents: write   # needed to push the updated manifest back
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          # Use a token so the push below triggers Pages deployment
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Regenerate brands/manifest.json
+        run: node scripts/gen-manifest.js
+
+      - name: Commit updated manifest
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add brands/manifest.json
+          # Only commit if there is actually a change
+          git diff --cached --quiet || git commit -m "chore: regenerate brands/manifest.json [skip ci]"
+          git push
