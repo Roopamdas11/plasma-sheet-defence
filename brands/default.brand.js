@@ -2,6 +2,7 @@
 BrandEngine.registerBrand({
   id: 'default',
   displayName: 'DEFAULT',
+  hidden: true,   // silent fallback — never shown in the theme selector
 
   palette: {
     accent:       '#00e5ff',

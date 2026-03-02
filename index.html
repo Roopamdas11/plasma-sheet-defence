@@ -32,11 +32,21 @@ html,body{width:100%;height:100%;background:#04020f;overflow:hidden;touch-action
 .upg-card .ci{font-size:1.5rem;margin-bottom:6px}
 .upg-card .cn{font-size:.65rem;text-transform:uppercase;letter-spacing:1px;font-weight:700;color:var(--accent,#00e5ff)}
 .upg-card .cd{font-size:.55rem;opacity:.6;margin-top:3px;color:#aad8e8;font-family:'Share Tech Mono',monospace}
-#pause-overlay{background:rgba(4,2,15,.94);z-index:11;gap:10px}
-.menu-row{display:flex;gap:9px;align-items:center;flex-wrap:wrap;justify-content:center;margin:2px 0}
-.menu-tog{background:none;border:1.5px solid rgba(0,229,255,.3);color:rgba(0,229,255,.65);padding:6px 13px;font-family:'Orbitron',sans-serif;font-size:.65rem;cursor:pointer;letter-spacing:2px;text-transform:uppercase;transition:all .1s}
+#pause-overlay{background:rgba(4,2,15,.94);z-index:11;gap:6px}
+.menu-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;margin:0}
+.menu-section-label{color:rgba(0,229,255,.38);font-size:.52rem;letter-spacing:3px;font-family:'Orbitron',sans-serif;text-transform:uppercase;text-align:center;margin-top:8px;margin-bottom:1px}
+.menu-label{color:rgba(0,229,255,.5);font-size:.6rem;letter-spacing:2px;font-family:'Orbitron',sans-serif;text-transform:uppercase;white-space:nowrap}
+.menu-tog{background:none;border:1.5px solid rgba(0,229,255,.3);color:rgba(0,229,255,.65);padding:8px 14px;font-family:'Orbitron',sans-serif;font-size:.65rem;cursor:pointer;letter-spacing:2px;text-transform:uppercase;transition:all .1s;min-height:40px}
+.menu-tog.compact{padding:7px 12px;font-size:.6rem;min-height:36px}
 .menu-tog.on{border-color:var(--accent,#00e5ff);color:var(--accent,#00e5ff);box-shadow:0 0 7px rgba(var(--accent-rgb,0,229,255),.22)}
 .menu-tog.danger{border-color:rgba(255,60,60,.4);color:rgba(255,100,100,.75)}
+/* Difficulty buttons */
+.diff-btn{background:none;border:1.5px solid rgba(0,229,255,.3);color:rgba(0,229,255,.55);padding:9px 16px;font-family:'Orbitron',sans-serif;font-size:.65rem;cursor:pointer;letter-spacing:2px;text-transform:uppercase;transition:all .12s;min-height:44px}
+.diff-btn.active-easy  {border-color:#00ff99;color:#00ff99;box-shadow:0 0 8px rgba(0,255,153,.3)}
+.diff-btn.active-medium{border-color:var(--accent,#00e5ff);color:var(--accent,#00e5ff);box-shadow:0 0 8px rgba(var(--accent-rgb,0,229,255),.3)}
+.diff-btn.active-hard  {border-color:#ff4444;color:#ff4444;box-shadow:0 0 8px rgba(255,68,68,.35)}
+/* Difficulty toast */
+#diff-toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(4,2,22,.92);border:1.5px solid var(--accent,#00e5ff);color:var(--accent,#00e5ff);font-family:'Orbitron',sans-serif;font-size:.7rem;letter-spacing:2px;padding:10px 20px;z-index:20;pointer-events:none;text-align:center;transition:opacity .35s;white-space:nowrap}
 #upgrade-pin{position:fixed;right:0;top:50%;z-index:9;background:rgba(0,20,15,.94);border:1.5px solid #00ff99;border-right:none;color:#00ff99;font-family:'Orbitron',sans-serif;font-size:.54rem;padding:11px 6px 11px 9px;letter-spacing:1px;cursor:pointer;pointer-events:all;text-transform:uppercase;box-shadow:-3px 0 16px rgba(0,255,153,.35);writing-mode:vertical-lr;transform:translateY(-50%) rotate(180deg);animation:pinP 1.4s infinite}
 @keyframes pinP{0%,100%{box-shadow:-3px 0 16px rgba(0,255,153,.35)}50%{box-shadow:-3px 0 24px rgba(0,255,153,.7)}}
 #boss-banner{position:fixed;top:15%;left:50%;transform:translateX(-50%);z-index:13;font-family:'Orbitron',sans-serif;font-size:clamp(.85rem,3.8vw,1.6rem);font-weight:900;letter-spacing:6px;color:#ff3333;text-transform:uppercase;text-shadow:0 0 16px rgba(255,50,50,.9);pointer-events:none;animation:bFlash .45s infinite}
@@ -50,9 +60,8 @@ html,body{width:100%;height:100%;background:#04020f;overflow:hidden;touch-action
 <body>
 <canvas id="canvas"></canvas>
 
-<!-- Loading screen shown while brand scripts initialise -->
 <div id="loading-screen">
-  <div>LOADING BRANDS…</div>
+  <div>LOADING…</div>
   <div id="loading-bar"></div>
 </div>
 
@@ -72,46 +81,131 @@ html,body{width:100%;height:100%;background:#04020f;overflow:hidden;touch-action
 </div>
 
 <div id="pause-overlay" class="ov hidden">
-  <div class="ov-title" style="font-size:1.8rem">PAUSED</div>
-  <button class="big-btn" id="resume-btn">RESUME</button>
-  <div class="menu-row">
-    <button class="menu-tog on" id="sfx-btn">SFX: ON</button>
-    <button class="menu-tog on" id="music-btn">MUSIC: ON</button>
-    <button class="menu-tog on" id="assist-btn">ASSIST: ON</button>
+  <div class="ov-title" style="font-size:1.6rem;margin-bottom:4px">PAUSED</div>
+  <button class="big-btn" id="resume-btn" style="margin:6px 0 10px">RESUME</button>
+
+  <!-- Row 1: Difficulty (most important, shown prominently) -->
+  <div class="menu-section-label">DIFFICULTY</div>
+  <div class="menu-row" id="diff-row">
+    <button class="diff-btn" data-diff="EASY">EASY</button>
+    <button class="diff-btn" data-diff="MEDIUM">MEDIUM</button>
+    <button class="diff-btn" data-diff="HARD">HARD</button>
   </div>
-  <!-- Brand row: populated DYNAMICALLY by BrandEngine.buildBrandRow() — never edit manually -->
+
+  <!-- Row 2: Theme (populated by BrandEngine) with inline lock -->
+  <div class="menu-section-label">THEME</div>
   <div class="menu-row" id="brand-row"></div>
-  <button class="big-btn" id="restart-btn" style="font-size:.76rem;padding:9px 26px">RESTART RUN</button>
-  <button class="menu-tog danger" id="hs-reset-btn">RESET HIGH SCORES</button>
+  <div class="menu-row" style="margin-top:2px">
+    <button class="menu-tog compact" id="theme-lock-btn">🔓 AUTO</button>
+  </div>
+
+  <!-- Row 3: Quick toggles — all on one line -->
+  <div class="menu-row" style="margin-top:6px">
+    <button class="menu-tog on compact" id="sfx-btn">SFX</button>
+    <button class="menu-tog on compact" id="music-btn">MUSIC</button>
+    <button class="menu-tog on compact" id="assist-btn">AIM</button>
+  </div>
+
+  <!-- Row 4: Actions -->
+  <div class="menu-row" style="margin-top:8px">
+    <button class="big-btn" id="restart-btn" style="font-size:.72rem;padding:10px 20px;margin:0 4px">RESTART</button>
+    <button class="menu-tog danger compact" id="hs-reset-btn">RESET SCORES</button>
+  </div>
 </div>
+
+<!-- Difficulty-change toast (hidden by default) -->
+<div id="diff-toast" class="hidden"></div>
 
 <div id="boss-banner" class="hidden">⚠ ANOMALY DETECTED ⚠</div>
 <button id="upgrade-pin" class="hidden">⬡ UPGRADE (1)</button>
 
 <!--
-  ══════════════════════════════════════════════════════════════
   LOADING SEQUENCE
-  1. brand-schema.js   — validation + defaults (no network)
-  2. brand-engine.js   — registry + CSS injection (no network)
-  3. Fetch manifest.json → dynamically inject brand scripts
-  4. BrandEngine.init() → restore saved brand, build brand row
-  5. Load game.js → start game loop
-  ══════════════════════════════════════════════════════════════
+  1. brand-schema.js   — validation + defaults
+  2. brand-engine.js   — registry + CSS injection
+  3. tuning.js         — difficulty presets + game balance
+  4. Fetch manifest.json → inject brand scripts
+  5. BrandEngine.init() → restore saved brand, build brand row
+  6. Tuning.init()     → restore saved difficulty, apply preferred brand
+  7. game.js           → start loop
 -->
 <script src="core/brand-schema.js"></script>
 <script src="core/brand-engine.js"></script>
+<script src="core/tuning.js"></script>
 <script>
 (function () {
   'use strict';
 
+  // ── Toast helper ──────────────────────────────────────────────────────
+  var _toastTimer = null;
+  function showToast(msg) {
+    var el = document.getElementById('diff-toast');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    el.style.opacity = '1';
+    if (_toastTimer) clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(function () {
+      el.style.opacity = '0';
+      setTimeout(function () { el.classList.add('hidden'); }, 380);
+    }, 3000);
+  }
+
+  // ── Difficulty UI ─────────────────────────────────────────────────────
+  function refreshDiffButtons() {
+    var cur = window.Tuning.getDifficulty();
+    document.querySelectorAll('.diff-btn').forEach(function (btn) {
+      var d = btn.dataset.diff;
+      btn.classList.remove('active-easy','active-medium','active-hard');
+      if (d === cur) btn.classList.add('active-' + d.toLowerCase());
+    });
+  }
+
+  document.querySelectorAll('.diff-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var name = btn.dataset.diff;
+      window.Tuning.setDifficulty(name);
+      refreshDiffButtons();
+      showToast('DIFFICULTY: ' + name + '  ·  RESTART TO APPLY FULLY');
+    });
+  });
+
+  window.addEventListener('difficultyChanged', refreshDiffButtons);
+
+  // ── Theme lock toggle ─────────────────────────────────────────────────
+  function refreshLockBtn() {
+    var locked = window.Tuning.isThemeLocked();
+    var btn = document.getElementById('theme-lock-btn');
+    btn.textContent = locked ? '🔒 LOCKED' : '🔓 AUTO';
+    btn.classList.toggle('on', locked);
+  }
+
+  document.getElementById('theme-lock-btn').addEventListener('click', function () {
+    var newLocked = !window.Tuning.isThemeLocked();
+    window.Tuning.setThemeLock(newLocked);
+    refreshLockBtn();
+    showToast(newLocked ? 'THEME LOCKED — auto-switch disabled' : 'THEME UNLOCKED — follows difficulty');
+  });
+
+  // Re-render diff+lock buttons whenever pause overlay opens
+  var _pauseObs = new MutationObserver(function (muts) {
+    muts.forEach(function (m) {
+      if (m.attributeName === 'class') {
+        var hidden = document.getElementById('pause-overlay').classList.contains('hidden');
+        if (!hidden) { refreshDiffButtons(); refreshLockBtn(); }
+      }
+    });
+  });
+  _pauseObs.observe(document.getElementById('pause-overlay'), { attributes: true });
+
+  // ── Script loader ─────────────────────────────────────────────────────
   function loadScript(src) {
     return new Promise(function (resolve, reject) {
       var s = document.createElement('script');
       s.src = src;
       s.onload = resolve;
       s.onerror = function () {
-        console.warn('[Loader] Failed to load brand script:', src);
-        resolve(); // soft-fail: missing brand file just means that brand won't appear
+        console.warn('[Loader] Failed to load:', src);
+        resolve();
       };
       document.head.appendChild(s);
     });
@@ -119,7 +213,11 @@ html,body{width:100%;height:100%;background:#04020f;overflow:hidden;touch-action
 
   function hideLoader() {
     var ls = document.getElementById('loading-screen');
-    if (ls) { ls.style.opacity = '0'; ls.style.transition = 'opacity .4s'; setTimeout(function(){ls.remove();}, 400); }
+    if (ls) {
+      ls.style.opacity = '0';
+      ls.style.transition = 'opacity .4s';
+      setTimeout(function () { ls.remove(); }, 400);
+    }
     document.getElementById('overlay').classList.remove('hidden');
   }
 
@@ -130,25 +228,23 @@ html,body{width:100%;height:100%;background:#04020f;overflow:hidden;touch-action
     })
     .then(function (manifest) {
       var ids = Array.isArray(manifest.brands) ? manifest.brands : [];
-      // Load each brand file sequentially (preserves registration order)
       return ids.reduce(function (chain, id) {
-        return chain.then(function () {
-          return loadScript('brands/' + id + '.brand.js');
-        });
+        return chain.then(function () { return loadScript('brands/' + id + '.brand.js'); });
       }, Promise.resolve());
     })
     .catch(function (err) {
-      console.warn('[Loader] manifest.json issue:', err.message, '— continuing with zero extra brands');
+      console.warn('[Loader] manifest issue:', err.message);
     })
     .then(function () {
-      // Initialise brand engine (restores saved brand, builds pause-menu row)
       window.BrandEngine.init();
-      // Load core game
+      window.Tuning.init();        // restore difficulty + apply preferred brand
+      refreshDiffButtons();
+      refreshLockBtn();
       return loadScript('core/game.js');
     })
     .then(hideLoader)
     .catch(function (err) {
-      console.error('[Loader] Fatal error during startup:', err);
+      console.error('[Loader] Fatal error:', err);
       document.getElementById('loading-screen').innerHTML =
         '<div style="color:#ff4444;font-size:.9rem">LOAD ERROR — check console</div>';
     });

@@ -123,8 +123,8 @@ let lastFinalScore=0,lastFinalTime=0;
 // ── TOWER ─────────────────────────────────────────────────────────────
 let tower={hp:100,maxHp:100,radius:28,regenTimer:0,hitFlash:0,healGlow:0};
 function towerHeal(amount,enemyMass){
-  let heal=Math.min(2.5,0.8+enemyMass*0.25);
-  if(tower.hp/tower.maxHp>0.7) heal*=0.35;
+  let heal=Math.min(Tuning.get('towerHealMax'),Tuning.get('towerHealBase')+enemyMass*0.25);
+  if(tower.hp/tower.maxHp>Tuning.get('towerHealThreshold')) heal*=0.35;
   tower.hp=Math.min(tower.maxHp,tower.hp+heal);
   tower.healGlow=0.6;
   spawnHealFX(towerX,towerY);
@@ -144,7 +144,7 @@ let upg={
   fireRate:1,dartSpeed:1,knockbackMult:1,pulseCdMult:1,
   shotCount:1,pierce:false,slowAura:false,
   ghostActive:false,ghostLife:0,ghostX:0,ghostY:0,
-  ramDmg:0.35,projTier:1,
+  ramDmg:Tuning.get('ramDamageBase'),projTier:1,
 };
 const MILESTONES=[100,300,600,1000,1600,2500,3800,5500,7500,10000];
 let milestonesHit=new Set();
@@ -169,14 +169,14 @@ const UPG_POOL=[
 
 // ── PULSE ─────────────────────────────────────────────────────────────
 let pulse={cd:0,maxCd:14,rings:[]};
-const PULSE_BASE_FORCE=850;
-const PULSE_RING_THICKNESS=26;
-const PULSE_RING_SPEED=380;
+const PULSE_BASE_FORCE    = () => Tuning.get('pulseBaseForce');
+const PULSE_RING_THICKNESS= () => Tuning.get('pulseRingThickness');
+const PULSE_RING_SPEED    = () => Tuning.get('pulseRingSpeed');
 
 function triggerPulse(){
   if(state!==S.PLAY||pulse.cd>0)return;
-  pulse.cd=pulse.maxCd*upg.pulseCdMult;
-  pulse.rings.push({r:tower.radius,speed:PULSE_RING_SPEED,maxR:Math.max(W,H)*0.78,hitSet:new Set()});
+  pulse.cd=Tuning.get('pulseMaxCd')*Tuning.get('pulseCooldownMult')*upg.pulseCdMult;
+  pulse.rings.push({r:tower.radius,speed:PULSE_RING_SPEED(),maxR:Math.max(W,H)*0.58,hitSet:new Set()});
   tone(180,0.28,'sine',0.18);
   // Brand-driven extra SFX — zero hardcoded brand checks
   const ap=T().audioProfile||{};
@@ -184,12 +184,14 @@ function triggerPulse(){
 }
 
 function pulseFillOnKill(enemyMass){
-  const gain=clamp(0.04+enemyMass*0.008,0.04,0.12);
+  const gain=clamp(Tuning.get('pulseKillRechargeMin')+enemyMass*0.008,
+                   Tuning.get('pulseKillRechargeMin'),
+                   Tuning.get('pulseKillRechargeMax'));
   pulse.cd=Math.max(0,pulse.cd-gain);
 }
 
 // ── BOSSES ────────────────────────────────────────────────────────────
-const BOSS_THRESHOLDS=[1800,3600,6000];
+const BOSS_THRESHOLDS=()=>Tuning.get('bossThresholds');
 let bossEventsTriggered=new Set();
 let bossActive=false,bossTimer=0,bossSpawnTimer=0;
 let bossBannerTimer=0;
@@ -197,7 +199,7 @@ let bossId=9000;
 
 function startBossEvent(idx){
   bossEventsTriggered.add(idx);
-  bossActive=true;bossTimer=30;bossBannerTimer=3.5;bossSpawnTimer=2.0;
+  bossActive=true;bossTimer=Tuning.get('bossTimer');bossBannerTimer=3.5;bossSpawnTimer=2.0;
   document.getElementById('boss-banner').classList.remove('hidden');
   tone(120,1.2,'sawtooth',0.2);
   musicIntensityBoost=2.5;
@@ -252,13 +254,14 @@ let safetyValveTimer=0;
 
 function getSpawnInterval(){
   const t2=getThreat2();
-  let iv=clamp(1.45-0.08*t2,0.28,1.45);
+  const mn=Tuning.get('spawnIntervalMin'), mx=Tuning.get('spawnIntervalMax');
+  let iv=clamp((mx-0.08*t2)*Tuning.get('spawnIntervalMult'),mn,mx);
   if(bossActive)iv*=2.1;
   if(pacingBoost)iv*=0.84;
   if(safetyValveTimer>0)iv*=1.35;
   return iv;
 }
-function getEnemyCap(){return Math.floor(clamp(18+2.8*getThreat2(),18,65));}
+function getEnemyCap(){return Math.floor(clamp((Tuning.get('enemyCapMin')+2.8*getThreat2())*Tuning.get('enemyCapMult'),Tuning.get('enemyCapMin'),Tuning.get('enemyCapMax')));}
 function getHpMult(){return clamp(1+0.03*getThreat2(),1,3.2);}
 function getSpdMult(){return clamp(1+0.015*getThreat2(),1,2.2);}
 
@@ -294,7 +297,7 @@ let enemies=[],enemyId=0;
 function makeEnemy(type,ex,ey){
   if(!EDEFS[type]) type='runner';
   const d=EDEFS[type];
-  const hm=getHpMult(),sm=getSpdMult(),t2=getThreat2();
+  const hm=getHpMult()*Tuning.get("enemyHpMult"),sm=getSpdMult()*Tuning.get("enemySpeedMult"),t2=getThreat2();
   const sides=type==='bruteNgon'?clamp(7+Math.floor(t2*0.5),7,14):(d.sides||3);
   const shieldHP=(type==='shielded'||type==='sentinelBrute')?3+Math.floor(t2*0.3):0;
   // Apply brand color overrides
@@ -321,21 +324,33 @@ function makeEnemy(type,ex,ey){
 function spawnEnemy(){
   if(enemies.filter(e=>!e._rm).length>=getEnemyCap())return;
   const a=rng()*Math.PI*2;
-  const sr=Math.max(W,H)*0.72;
-  const ex=towerX+Math.cos(a)*sr,ey=towerY+Math.sin(a)*sr;
+  // Spawn just outside the visible screen edge rather than deep off-screen.
+  // This keeps enemies arriving at a steady trickle instead of all piling up
+  // far away and walking in as one synchronized wave.
+  const halfW=W/2+24, halfH=H/2+24;
+  const t=rng(), onSide=rng()<0.5;
+  let ex,ey;
+  if(onSide){ex=towerX+(rng()<0.5?-1:1)*(halfW+rng()*40);ey=towerY+(rng()*2-1)*halfH;}
+  else      {ex=towerX+(rng()*2-1)*halfW;ey=towerY+(rng()<0.5?-1:1)*(halfH+rng()*40);}
+  ex=Math.round(ex); ey=Math.round(ey);
   const type=tower.hp<tower.maxHp*0.25?'runner':pickEnemyType();
   enemies.push(makeEnemy(type,ex,ey));
 }
 function spawnFodderPack(){
   const n=3+Math.floor(rng()*3);
   for(let i=0;i<n;i++){
-    const a=rng()*Math.PI*2,sr=(0.68+rng()*0.08)*Math.max(W,H);
-    enemies.push(makeEnemy('runner',towerX+Math.cos(a)*sr,towerY+Math.sin(a)*sr));
+    const halfW=W/2+20,halfH=H/2+20;
+    let ex,ey;
+    if(rng()<0.5){ex=towerX+(rng()<0.5?-1:1)*(halfW+rng()*30);ey=towerY+(rng()*2-1)*halfH;}
+    else         {ex=towerX+(rng()*2-1)*halfW;ey=towerY+(rng()<0.5?-1:1)*(halfH+rng()*30);}
+    enemies.push(makeEnemy('runner',ex,ey));
   }
 }
 function spawnEscortPack(){
-  const a=rng()*Math.PI*2,sr=Math.max(W,H)*0.7;
-  const bx=towerX+Math.cos(a)*sr,by=towerY+Math.sin(a)*sr;
+  const halfW=W/2+20,halfH=H/2+20;
+  let bx,by;
+  if(rng()<0.5){bx=towerX+(rng()<0.5?-1:1)*(halfW+20);by=towerY+(rng()*2-1)*halfH;}
+  else         {bx=towerX+(rng()*2-1)*halfW;by=towerY+(rng()<0.5?-1:1)*(halfH+20);}
   if(score>=GAUSS_DEFS.anchored.unlock) enemies.push(makeEnemy('anchored',bx,by));
   for(let i=0;i<3;i++){const off=(rng()-.5)*80;enemies.push(makeEnemy('skitter',bx+off,by+off));}
 }
@@ -443,7 +458,7 @@ function updateEnemy(en,dt){
   en.wobble+=dt*2.5;
 
   if(dist(en.x,en.y,towerX,towerY)<tower.radius+en.radius){
-    tower.hp-=5+en.extraDmg;tower.hitFlash=0.3;
+    tower.hp-=Tuning.get('enemyTowerDmgBase')+en.extraDmg;tower.hitFlash=0.3;
     shake.x=(rng()-.5)*6;shake.y=(rng()-.5)*6;shake.t=0.12;
     tone(80,0.18,'sawtooth',0.2);
     if(en.type==='splitter')doSplit(en);
@@ -456,7 +471,7 @@ function doSplit(en){
   for(let i=0;i<2;i++){const a=rng()*Math.PI*2;enemies.push(makeEnemy('runner',en.x+Math.cos(a)*12,en.y+Math.sin(a)*12));}
 }
 function spawnExploderBurst(x,y){
-  tower.hp-=8;tower.hitFlash=0.5;
+  tower.hp-=Tuning.get('exploderTowerDmg');tower.hitFlash=0.5;
   spawnPlasmaExplosion(x,y,'#ff4400');
   enemies.forEach(en=>{
     if(en._rm)return;
@@ -498,7 +513,7 @@ function killEnemy(en){
   if(now-lastKillTime<2.0)combo=Math.min(1.7,combo+0.12);
   else combo=1;
   lastKillTime=now;
-  const reward=Math.round(en.reward*combo);
+  const reward=Math.round(en.reward*combo*Tuning.get('scoreMult'));
   score+=reward;
   recentKills.push(elapsed);
   if(en.type==='splitter')doSplit(en);
@@ -515,7 +530,7 @@ function killEnemy(en){
   MILESTONES.forEach((ms,i)=>{
     if(!milestonesHit.has(i)&&score>=ms){milestonesHit.add(i);bgPhase=milestonesHit.size;upgradePendingCount++;updateUpgradePin();}
   });
-  BOSS_THRESHOLDS.forEach((th,idx)=>{
+  BOSS_THRESHOLDS().forEach((th,idx)=>{
     if(!bossEventsTriggered.has(idx)&&score>=th&&!bossActive)startBossEvent(idx);
   });
 }
@@ -526,7 +541,7 @@ function getTierColor(){const t=T();return t.projColors[clamp(upg.projTier-1,0,3
 function getTierDmg(){return[1,1.4,2.0,3.0][clamp(upg.projTier-1,0,3)];}
 
 function fireDart(x,y,angle){
-  const spr=(rng()-.5)*0.11,spd=340*upg.dartSpeed;
+  const spr=(rng()-.5)*0.11,spd=Tuning.get('dartSpeedBase')*upg.dartSpeed;
   const a=angle+spr;
   projectiles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,life:1.4,dead:false,pierced:false});
 }
@@ -741,9 +756,9 @@ document.getElementById('hs-reset-btn').addEventListener('click',()=>{if(confirm
 const sfxBtn=document.getElementById('sfx-btn');
 const musicBtn=document.getElementById('music-btn');
 const assistBtn=document.getElementById('assist-btn');
-sfxBtn.addEventListener('click',()=>{sfxMuted=!sfxMuted;sfxBtn.textContent=sfxMuted?'SFX: OFF':'SFX: ON';sfxBtn.classList.toggle('on',!sfxMuted);});
-musicBtn.addEventListener('click',()=>{musicMuted=!musicMuted;musicBtn.textContent=musicMuted?'MUSIC: OFF':'MUSIC: ON';musicBtn.classList.toggle('on',!musicMuted);if(musicBus)musicBus.gain.setTargetAtTime(musicMuted?0:0.55,audioCtx.currentTime,0.3);});
-assistBtn.addEventListener('click',()=>{aimAssistOn=!aimAssistOn;assistBtn.textContent=aimAssistOn?'ASSIST: ON':'ASSIST: OFF';assistBtn.classList.toggle('on',aimAssistOn);});
+sfxBtn.addEventListener('click',()=>{sfxMuted=!sfxMuted;sfxBtn.textContent=sfxMuted?'SFX ✕':'SFX';sfxBtn.classList.toggle('on',!sfxMuted);});
+musicBtn.addEventListener('click',()=>{musicMuted=!musicMuted;musicBtn.textContent=musicMuted?'MUSIC ✕':'MUSIC';musicBtn.classList.toggle('on',!musicMuted);if(musicBus)musicBus.gain.setTargetAtTime(musicMuted?0:0.55,audioCtx.currentTime,0.3);});
+assistBtn.addEventListener('click',()=>{aimAssistOn=!aimAssistOn;assistBtn.textContent=aimAssistOn?'AIM':'AIM ✕';assistBtn.classList.toggle('on',aimAssistOn);});
 
 // When brand changes during game, refresh CSS
 window.addEventListener('brandChanged',()=>{
@@ -835,13 +850,16 @@ function update(dt){
     ring.r+=ring.speed*dt;
     enemies.forEach(en=>{
       if(en._rm||ring.hitSet.has(en.id))return;
+      // Only pulse enemies that are visible on screen — prevents wiping out the
+      // entire off-screen spawn pool with one shockwave
+      if(en.x<-en.radius||en.x>W+en.radius||en.y<-en.radius||en.y>H+en.radius)return;
       const d=dist(en.x,en.y,towerX,towerY);
-      if(Math.abs(d-ring.r)<=en.radius+PULSE_RING_THICKNESS){
+      if(Math.abs(d-ring.r)<=en.radius+PULSE_RING_THICKNESS()){
         ring.hitSet.add(en.id);
         const nx=(en.x-towerX)/(d||1),ny=(en.y-towerY)/(d||1);
         const anchorMult=en.anchored?0.08:1;
         const sentMult=en.type==='sentinelBrute'?0.1:1;
-        const impulse=(PULSE_BASE_FORCE/(en.mass||1))*anchorMult*sentMult;
+        const impulse=(PULSE_BASE_FORCE()/(en.mass||1))*anchorMult*sentMult;
         en.vx+=nx*impulse;en.vy+=ny*impulse;
         if(en.shieldHp>0){en.shieldHp=0;spawnImpact(en.x,en.y,'#88eeff');}
         else hitEnemy(en,2.0+en.mass*0.45,true);
@@ -886,7 +904,7 @@ function update(dt){
   if(tower.hitFlash>0)tower.hitFlash-=dt;
   if(tower.healGlow>0)tower.healGlow-=dt;
   tower.regenTimer+=dt;
-  if(tower.regenTimer>=4&&tower.hp<tower.maxHp){tower.hp=Math.min(tower.maxHp,tower.hp+0.04);tower.regenTimer=0;}
+  if(tower.regenTimer>=Tuning.get('towerRegenInterval')&&tower.hp<tower.maxHp){tower.hp=Math.min(tower.maxHp,tower.hp+Tuning.get('towerRegenAmount'));tower.regenTimer=0;}
   projectiles.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;});
   projectiles=projectiles.filter(p=>p.life>0&&!p.dead);
   projectiles.forEach(p=>{
@@ -894,7 +912,7 @@ function update(dt){
     enemies.forEach(en=>{
       if(p.dead||en._rm)return;
       if(dist(p.x,p.y,en.x,en.y)<en.radius+5){
-        hitEnemy(en,1,true);
+        hitEnemy(en,Tuning.get('projectileDamageMult'),true);
         if(!upg.pierce||p.pierced)p.dead=true;else p.pierced=true;
       }
     });
@@ -984,18 +1002,27 @@ function startGame(){
   document.getElementById('pause-overlay').classList.add('hidden');
   document.getElementById('boss-banner').classList.add('hidden');
   score=0;elapsed=0;waveStage=0;bgPhase=0;
-  tower.hp=tower.maxHp=100;tower.hitFlash=0;tower.regenTimer=0;tower.healGlow=0;
+  const _hp=Tuning.get("towerHp"); tower.hp=tower.maxHp=_hp;tower.hitFlash=0;tower.regenTimer=0;tower.healGlow=0;
   shard.x=W/2;shard.y=H*0.32;
   shard.aimAngle=-Math.PI/2;shard.aimLocked=false;shard.autoAimGrace=0;
-  shard.fireCooldown=0;shard.isDragged=false;shard.hasPlasmaTrail=false;shard.trailDmgMult=1;
+  shard.fireCooldown=0;shard.fireRate=Tuning.get("playerFireRate");shard.isDragged=false;shard.hasPlasmaTrail=false;shard.trailDmgMult=1;
   shard.overdriveMode=false;shard.overdriveTimer=0;shard.shieldHp=0;shard.shieldRegenTime=12;shard.shieldRegenTimer=0;
   shard.trailX=[];shard.trailY=[];
   controls.aim.active=false;controls.aim.pid=null;controls.aim.dx=0;controls.aim.dy=0;
   controls.move.active=false;controls.move.pid=null;
-  upg={fireRate:1,dartSpeed:1,knockbackMult:1,pulseCdMult:1,shotCount:1,pierce:false,slowAura:false,ghostActive:false,ghostLife:0,ghostX:0,ghostY:0,ramDmg:.35,projTier:1};
+  upg={fireRate:1,dartSpeed:1,knockbackMult:1,pulseCdMult:1,shotCount:1,pierce:false,slowAura:false,ghostActive:false,ghostLife:0,ghostX:0,ghostY:0,ramDmg:Tuning.get("ramDamageBase"),projTier:1};
   pulse.cd=0;pulse.rings=[];
   enemies=[];projectiles=[];particles=[];
-  spawnTimer=2.0;milestonesHit=new Set();upgradeFlash={text:'',timer:0};
+  spawnTimer=0.5;  // first enemy arrives in 0.5s, not 2s
+  milestonesHit=new Set();upgradeFlash={text:'',timer:0};
+  // Seed 2 runners immediately so the player has something to engage right away
+  for(let i=0;i<2;i++){
+    const halfW=W/2+20,halfH=H/2+20;
+    let ex,ey;
+    if(i===0){ex=towerX-halfW-10;ey=towerY+(rng()*2-1)*halfH*0.6;}
+    else     {ex=towerX+halfW+10;ey=towerY+(rng()*2-1)*halfH*0.6;}
+    enemies.push(makeEnemy('runner',ex,ey));
+  }
   upgradePendingCount=0;updateUpgradePin();
   recentKills=[];recentScoreSnap=0;recentScoreTime=elapsed;
   pacingBoost=false;pacingBoostTimer=0;safetyValveTimer=0;
@@ -1360,7 +1387,7 @@ function drawHUD(){
     ctx.fillText('⬡  '+upgradeFlash.text+'  ⬡',CX,H*.1);
     ctx.restore();upgradeFlash.timer-=1/60;
   }
-  const maxCd=pulse.maxCd*upg.pulseCdMult,frac=pulse.cd/maxCd;
+  const maxCd=Tuning.get('pulseMaxCd')*Tuning.get('pulseCooldownMult')*upg.pulseCdMult,frac=pulse.cd/maxCd;
   if(frac>0){
     ctx.save();ctx.shadowBlur=7;ctx.shadowColor=acc;ctx.strokeStyle=acc+'cc';ctx.lineWidth=2.5;ctx.lineCap='round';
     ctx.beginPath();ctx.arc(18+28,18+28,24,-Math.PI/2,-Math.PI/2+Math.PI*2*(1-frac));ctx.stroke();

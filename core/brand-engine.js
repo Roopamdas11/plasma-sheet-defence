@@ -17,7 +17,9 @@ window.BrandEngine = (function () {
     if (!brand) return;
     if (!_registry.has(brand.id)) _loadOrder.push(brand.id);
     _registry.set(brand.id, brand);
-    console.log('[BrandEngine] ✓ Registered brand:', brand.id, '—', brand.displayName);
+    // Mark hidden flag from raw config (not in schema, stored directly)
+    if (raw.hidden) brand.hidden = true;
+    console.log('[BrandEngine] ✓ Registered brand:', brand.id, '—', brand.displayName, brand.hidden ? '(hidden)' : '');
   }
 
   // ── Getters ────────────────────────────────────────────────────────
@@ -96,10 +98,11 @@ window.BrandEngine = (function () {
 
     const label = document.createElement('span');
     label.style.cssText = 'color:rgba(0,229,255,.5);font-size:.6rem;letter-spacing:2px';
-    label.textContent = 'BRAND:';
+    label.textContent = 'THEME:';
     row.appendChild(label);
 
-    getBrands().forEach(b => {
+    // hidden brands (e.g. 'default') are registered but not shown in UI
+    getBrands().filter(b => !b.hidden).forEach(b => {
       const btn = document.createElement('button');
       btn.className = 'menu-tog brand-tog' + (b.id === _currentId ? ' on' : '');
       btn.dataset.brandId = b.id;
