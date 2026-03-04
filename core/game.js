@@ -664,16 +664,15 @@ function spawnHealFX(x,y){
 // ── CONTROLS / INPUT ─────────────────────────────────────────────────
 const controls={
   aim:  {x:0,y:0,r:64,active:false,pid:null,dx:0,dy:0},
-  // Pulse is a small inner circle centred on the joystick (no right-side button)
-  pulse:{x:0,y:0,r:26},
+  pulse:{x:0,y:0,r:38},   // standalone circle to the RIGHT of the joystick
   move: {active:false,pid:null,rawX:0,rawY:0},
 };
 function layoutControls(){
   controls.aim.x=26+controls.aim.r;
   controls.aim.y=H-26-controls.aim.r;
-  // Pulse sits at the top-right edge of the joystick disc
-  controls.pulse.x=controls.aim.x+controls.aim.r*0.52;
-  controls.pulse.y=controls.aim.y-controls.aim.r*0.52;
+  // Pulse sits to the right of the joystick with a gap
+  controls.pulse.x=controls.aim.x+controls.aim.r+18+controls.pulse.r;
+  controls.pulse.y=controls.aim.y;
 }
 function inCircle(px,py,cx,cy,r){const dx=px-cx,dy=py-cy;return dx*dx+dy*dy<=r*r;}
 
@@ -691,8 +690,8 @@ function onPD(e){
   if(state!==S.PLAY)return;
   const x=e.clientX,y=e.clientY;
 
-  // Pulse inner circle (sits inside joystick — checked FIRST so it takes priority)
-  if(inCircle(x,y,controls.pulse.x,controls.pulse.y,controls.pulse.r*1.15)){
+  // Pulse button (right of joystick — checked before move fallback)
+  if(inCircle(x,y,controls.pulse.x,controls.pulse.y,controls.pulse.r*1.2)){
     triggerPulse();return;
   }
 
@@ -775,8 +774,28 @@ pauseBtn.textContent='⏸';
 pauseBtn.addEventListener('pointerdown',e=>{e.stopPropagation();togglePause();});
 document.body.appendChild(pauseBtn);
 
-const upgradePin=document.getElementById('upgrade-pin');
-upgradePin.addEventListener('click',()=>{if(state===S.PLAY&&upgradePendingCount>0)openUpgradeOverlay();});
+// Help button (below pause)
+const helpBtn=document.createElement('button');
+helpBtn.id='help-btn';helpBtn.textContent='?';
+document.body.appendChild(helpBtn);
+
+const helpOverlay=document.getElementById('help-overlay');
+const helpCloseBtn=document.getElementById('help-close-btn');
+let helpVisible=false;
+function showHelp(){helpVisible=true;helpOverlay.classList.remove('hidden');helpOverlay.classList.add('visible');}
+function hideHelp(){helpVisible=false;helpOverlay.classList.add('hidden');helpOverlay.classList.remove('visible');}
+helpBtn.addEventListener('pointerdown',e=>{e.stopPropagation();helpVisible?hideHelp():showHelp();});
+helpCloseBtn.addEventListener('click',e=>{e.stopPropagation();hideHelp();});
+helpOverlay.addEventListener('pointerdown',e=>{if(e.target===helpOverlay)hideHelp();});
+
+// Auto-show help once on very first play
+try{if(!localStorage.getItem('psd_help_seen')){
+  setTimeout(()=>{showHelp();setTimeout(()=>{hideHelp();localStorage.setItem('psd_help_seen','1');},5000);},800);
+}}catch(_){}
+
+// Upgrade pill
+const upgradePill=document.getElementById('upgrade-pill');
+upgradePill.addEventListener('pointerdown',e=>{e.stopPropagation();if(state===S.PLAY&&upgradePendingCount>0)openUpgradeOverlay();});
 
 document.getElementById('resume-btn').addEventListener('click',resumeGame);
 document.getElementById('restart-btn').addEventListener('click',()=>{document.getElementById('pause-overlay').classList.add('hidden');startGame();});
@@ -805,8 +824,13 @@ function applyBrandCSS(){
 
 // ── UPGRADE OVERLAY ───────────────────────────────────────────────────
 function updateUpgradePin(){
-  if(upgradePendingCount>0){upgradePin.textContent=`⬡ UPGRADE (${upgradePendingCount})`;upgradePin.classList.remove('hidden');}
-  else upgradePin.classList.add('hidden');
+  if(upgradePendingCount>0){
+    document.getElementById('upgrade-pill-text').textContent=
+      upgradePendingCount>1?`⚡ ${upgradePendingCount} UPGRADES AVAILABLE`:`⚡ UPGRADE AVAILABLE`;
+    upgradePill.classList.remove('hidden');
+  }else{
+    upgradePill.classList.add('hidden');
+  }
 }
 function openUpgradeOverlay(){
   state=S.UPGRADE;duckMusic();
@@ -1358,54 +1382,59 @@ function drawControls(){
 
   // ── Aim joystick (bottom-left) ─────────────────────────────────────
   const ax=controls.aim.x,ay=controls.aim.y,ar=controls.aim.r;
+  // Outer disc
   ctx.globalAlpha=.12;ctx.fillStyle=th.accent;
   ctx.beginPath();ctx.arc(ax,ay,ar,0,Math.PI*2);ctx.fill();
-  ctx.globalAlpha=.26;ctx.strokeStyle=th.accent;ctx.lineWidth=1.5;
+  ctx.globalAlpha=.30;ctx.strokeStyle=th.accent;ctx.lineWidth=1.5;
   ctx.beginPath();ctx.arc(ax,ay,ar,0,Math.PI*2);ctx.stroke();
-
+  // Inner ring guide
+  ctx.globalAlpha=.10;ctx.strokeStyle=th.accent;ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(ax,ay,ar*.55,0,Math.PI*2);ctx.stroke();
   // Thumb nub
-  ctx.globalAlpha=.42;ctx.fillStyle=th.accent+'99';ctx.shadowBlur=0;
-  ctx.beginPath();ctx.arc(ax+controls.aim.dx,ay+controls.aim.dy,ar*.35,0,Math.PI*2);ctx.fill();
+  ctx.globalAlpha=.50;ctx.fillStyle=th.accent;
+  ctx.shadowBlur=8;ctx.shadowColor=th.accent;
+  ctx.beginPath();ctx.arc(ax+controls.aim.dx,ay+controls.aim.dy,ar*.30,0,Math.PI*2);ctx.fill();
+  ctx.shadowBlur=0;
+  // Label
+  ctx.globalAlpha=.40;ctx.fillStyle=th.accent;
+  ctx.font=`${clamp(W*.016,7,10)}px ${th.hudFont}`;ctx.textAlign='center';
+  ctx.fillText('AIM / FIRE',ax,ay+ar+14);
 
-  // Label below
-  ctx.globalAlpha=.34;ctx.fillStyle=th.accent;
-  ctx.font=`${clamp(W*.018,7,11)}px ${th.hudFont}`;ctx.textAlign='center';
-  ctx.fillText('AIM/FIRE',ax,ay+ar+14);
-
-  // ── Pulse mini-button (overlaid on joystick, top-right quadrant) ───
+  // ── Pulse button (right of joystick, fully separate) ───────────────
   const px=controls.pulse.x,py=controls.pulse.y,pr=controls.pulse.r;
   const maxCd=Tuning.get('pulseMaxCd')*Tuning.get('pulseCooldownMult')*upg.pulseCdMult;
   const frac=maxCd>0?pulse.cd/maxCd:0;
   const ready=pulse.cd<=0;
 
-  // Background disc
-  ctx.globalAlpha=ready?.30:.16;
+  // Outer disc
+  ctx.globalAlpha=ready?.22:.10;
   ctx.fillStyle=ready?th.accent:'#223344';
   ctx.beginPath();ctx.arc(px,py,pr,0,Math.PI*2);ctx.fill();
-
   // Border
-  ctx.globalAlpha=ready?.65:.25;
-  ctx.strokeStyle=ready?th.accent:'rgba(80,110,140,.6)';
+  ctx.globalAlpha=ready?.70:.28;
+  ctx.strokeStyle=ready?th.accent:'rgba(80,120,150,.5)';
   ctx.lineWidth=ready?2:1.5;
   ctx.beginPath();ctx.arc(px,py,pr,0,Math.PI*2);ctx.stroke();
-
-  // Recharge arc
+  // Recharge arc (sweeps clockwise from top as cooldown drains)
   if(!ready&&frac>0){
     ctx.globalAlpha=.85;
-    ctx.strokeStyle=th.accent;ctx.lineWidth=2.5;ctx.lineCap='round';
-    ctx.shadowBlur=8;ctx.shadowColor=th.accent;
+    ctx.strokeStyle=th.accent;ctx.lineWidth=3;ctx.lineCap='round';
+    ctx.shadowBlur=9;ctx.shadowColor=th.accent;
     ctx.beginPath();ctx.arc(px,py,pr-2,-Math.PI/2,-Math.PI/2+Math.PI*2*(1-frac));ctx.stroke();
     ctx.shadowBlur=0;ctx.lineCap='butt';
   }
-  if(ready){ctx.shadowBlur=12;ctx.shadowColor=th.accent;}
-
-  // Icon ◎
-  ctx.globalAlpha=ready?1:.40;
-  ctx.fillStyle=ready?th.accent:'rgba(120,160,180,.8)';
-  ctx.font=`bold ${Math.round(pr*1.1)}px sans-serif`;
+  if(ready){ctx.shadowBlur=16;ctx.shadowColor=th.accent;}
+  // Icon
+  ctx.globalAlpha=ready?1:.38;
+  ctx.fillStyle=ready?th.accent:'rgba(120,160,180,.7)';
+  ctx.font=`bold ${Math.round(pr*1.0)}px sans-serif`;
   ctx.textAlign='center';ctx.textBaseline='middle';
   ctx.fillText('◎',px,py);
   ctx.textBaseline='alphabetic';ctx.shadowBlur=0;
+  // Label
+  ctx.globalAlpha=.40;ctx.fillStyle=th.accent;
+  ctx.font=`${clamp(W*.016,7,10)}px ${th.hudFont}`;ctx.textAlign='center';
+  ctx.fillText('PULSE',px,py+pr+14);
 
   ctx.restore();
 }
@@ -1428,12 +1457,14 @@ function drawHUD(){
   const fnt=T().hudFont||'Orbitron,sans-serif';
   const acc=T().accent;
   ctx.save();
-  ctx.font=`bold ${clamp(W*.04,17,27)}px ${fnt}`;
-  ctx.shadowColor=acc;ctx.shadowBlur=11;ctx.fillStyle=acc;
-  ctx.fillText(score,20,36);
+  // Score — large, bright white with accent glow
+  ctx.font=`900 ${clamp(W*.045,20,32)}px ${fnt}`;
+  ctx.shadowColor=acc;ctx.shadowBlur=18;
+  ctx.fillStyle='#ffffff';
+  ctx.fillText(score,20,40);
   if(combo>1.05){
-    ctx.font=`${clamp(W*.024,10,15)}px ${fnt}`;ctx.fillStyle='#ffee00';ctx.shadowColor='#ffee00';ctx.shadowBlur=9;
-    ctx.fillText(`×${combo.toFixed(1)}`,20,54);
+    ctx.font=`bold ${clamp(W*.024,10,15)}px ${fnt}`;ctx.fillStyle='#ffee00';ctx.shadowColor='#ffee00';ctx.shadowBlur=10;
+    ctx.fillText(`×${combo.toFixed(1)}`,22,58);
   }
   ctx.restore();
   ctx.save();

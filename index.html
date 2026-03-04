@@ -47,8 +47,21 @@ html,body{width:100%;height:100%;background:#04020f;overflow:hidden;touch-action
 .diff-btn.active-hard  {border-color:#ff4444;color:#ff4444;box-shadow:0 0 8px rgba(255,68,68,.35)}
 /* Difficulty toast */
 #diff-toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(4,2,22,.92);border:1.5px solid var(--accent,#00e5ff);color:var(--accent,#00e5ff);font-family:'Orbitron',sans-serif;font-size:.7rem;letter-spacing:2px;padding:10px 20px;z-index:20;pointer-events:none;text-align:center;transition:opacity .35s;white-space:nowrap}
-#upgrade-pin{position:fixed;right:0;top:50%;z-index:9;background:rgba(0,20,15,.94);border:1.5px solid #00ff99;border-right:none;color:#00ff99;font-family:'Orbitron',sans-serif;font-size:.54rem;padding:11px 6px 11px 9px;letter-spacing:1px;cursor:pointer;pointer-events:all;text-transform:uppercase;box-shadow:-3px 0 16px rgba(0,255,153,.35);writing-mode:vertical-lr;transform:translateY(-50%) rotate(180deg);animation:pinP 1.4s infinite}
-@keyframes pinP{0%,100%{box-shadow:-3px 0 16px rgba(0,255,153,.35)}50%{box-shadow:-3px 0 24px rgba(0,255,153,.7)}}
+/* Upgrade pill — top-center bright banner */
+#upgrade-pill{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9;display:flex;align-items:center;gap:8px;background:rgba(0,18,10,.92);border:2px solid #00ff99;border-radius:40px;padding:9px 22px;cursor:pointer;pointer-events:all;box-shadow:0 0 22px rgba(0,255,153,.55),0 0 6px rgba(0,255,153,.3) inset;animation:pillPulse 1.2s infinite}
+#upgrade-pill-text{font-family:'Orbitron',sans-serif;font-size:clamp(.7rem,2.2vw,.88rem);font-weight:700;color:#00ff99;letter-spacing:2px;text-transform:uppercase;white-space:nowrap;text-shadow:0 0 10px rgba(0,255,153,.8)}
+@keyframes pillPulse{0%,100%{box-shadow:0 0 18px rgba(0,255,153,.5),0 0 6px rgba(0,255,153,.25) inset}50%{box-shadow:0 0 32px rgba(0,255,153,.85),0 0 10px rgba(0,255,153,.45) inset}}
+/* Help button */
+#help-btn{position:fixed;top:64px;right:14px;width:36px;height:36px;border-radius:50%;background:rgba(4,2,15,.8);border:1.5px solid rgba(0,229,255,.4);color:rgba(0,229,255,.8);font-family:'Orbitron',sans-serif;font-size:.85rem;font-weight:700;cursor:pointer;pointer-events:all;z-index:5;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+/* Help overlay panel */
+#help-overlay{position:fixed;inset:0;z-index:20;pointer-events:none;display:flex;align-items:flex-start;justify-content:flex-end;padding:110px 14px 0 0}
+#help-overlay.visible{pointer-events:all}
+#help-panel{background:rgba(4,2,22,.95);border:1.5px solid rgba(0,229,255,.45);border-radius:10px;padding:16px 18px;min-width:220px;max-width:280px;backdrop-filter:blur(8px);box-shadow:0 4px 32px rgba(0,0,0,.7)}
+.help-title{font-family:'Orbitron',sans-serif;font-size:.7rem;font-weight:700;letter-spacing:3px;color:var(--accent,#00e5ff);text-transform:uppercase;margin-bottom:12px;text-align:center;opacity:.9}
+.help-row{display:flex;align-items:flex-start;gap:10px;margin-bottom:9px;font-family:'Share Tech Mono',monospace;font-size:.72rem;color:rgba(180,220,235,.85);line-height:1.4}
+.help-icon{flex-shrink:0;font-size:.85rem;width:20px;text-align:center;margin-top:1px}
+#help-close-btn{width:100%;margin-top:12px;background:transparent;border:1.5px solid rgba(0,229,255,.4);color:rgba(0,229,255,.8);font-family:'Orbitron',sans-serif;font-size:.62rem;letter-spacing:2px;padding:7px;cursor:pointer;border-radius:4px;text-transform:uppercase}
+#help-close-btn:active{background:rgba(0,229,255,.1)}
 #boss-banner{position:fixed;top:15%;left:50%;transform:translateX(-50%);z-index:13;font-family:'Orbitron',sans-serif;font-size:clamp(.85rem,3.8vw,1.6rem);font-weight:900;letter-spacing:6px;color:#ff3333;text-transform:uppercase;text-shadow:0 0 16px rgba(255,50,50,.9);pointer-events:none;animation:bFlash .45s infinite}
 @keyframes bFlash{0%,100%{opacity:1}50%{opacity:.4}}
 #loading-screen{position:fixed;inset:0;background:#04020f;display:flex;align-items:center;justify-content:center;z-index:100;font-family:'Orbitron',sans-serif;color:#00e5ff;font-size:clamp(.8rem,3vw,1.2rem);letter-spacing:3px;flex-direction:column;gap:12px}
@@ -117,7 +130,21 @@ html,body{width:100%;height:100%;background:#04020f;overflow:hidden;touch-action
 <div id="diff-toast" class="hidden"></div>
 
 <div id="boss-banner" class="hidden">⚠ ANOMALY DETECTED ⚠</div>
-<button id="upgrade-pin" class="hidden">⬡ UPGRADE (1)</button>
+<div id="upgrade-pill" class="hidden">
+  <span id="upgrade-pill-text">⚡ UPGRADE AVAILABLE</span>
+</div>
+
+<div id="help-overlay" class="hidden">
+  <div id="help-panel">
+    <div class="help-title">CONTROLS</div>
+    <div class="help-row"><span class="help-icon">👆</span><span>Drag anywhere → move ship</span></div>
+    <div class="help-row"><span class="help-icon">🕹️</span><span>Bottom-left circle → aim &amp; fire</span></div>
+    <div class="help-row"><span class="help-icon">◎</span><span>PULSE button (right of joystick) → shockwave</span></div>
+    <div class="help-row"><span class="help-icon">⬡</span><span>Tap upgrade pill → pick an upgrade</span></div>
+    <div class="help-row"><span class="help-icon">⏸</span><span>Pause button (top-right) → menu</span></div>
+    <button id="help-close-btn">GOT IT</button>
+  </div>
+</div>
 
 <!--
   LOADING SEQUENCE
