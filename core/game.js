@@ -136,7 +136,6 @@ let shard={
   fireCooldown:0,fireRate:0.55,radius:26,isDragged:false,
   trailX:[],trailY:[],hasPlasmaTrail:false,trailDmgMult:1,
   overdriveMode:false,overdriveTimer:0,
-  shieldHp:0,shieldRegenTime:12,shieldRegenTimer:0,
 };
 
 // ── UPGRADES ─────────────────────────────────────────────────────────
@@ -159,7 +158,6 @@ const UPG_POOL=[
   {icon:'◆', name:'Pierce Rounds',     desc:'Darts pass through foes',      canShow:()=>!upg.pierce, apply:()=>{upg.pierce=true;}},
   {icon:'🌊',name:'Plasma Trail',      desc:'Wake damages enemies',         canShow:()=>!shard.hasPlasmaTrail, apply:()=>{shard.hasPlasmaTrail=true;}},
   {icon:'〰',name:'Trail Dmg +25%',    desc:'Stronger plasma wake',         canShow:()=>shard.hasPlasmaTrail, apply:()=>{shard.trailDmgMult*=1.25;}},
-  {icon:'🛡',name:'Shield Regen',      desc:'Absorbs 1 hit · recharges',   apply:()=>{shard.shieldHp=1;shard.shieldRegenTime=Math.max(3,(shard.shieldRegenTime||12)-2);}},
   {icon:'◎', name:'Pulse CD -10%',     desc:'Shockwave charges faster',     apply:()=>{upg.pulseCdMult*=0.90;}},
   {icon:'👻',name:'Ghost Ship',        desc:'Twin fires alongside you',     canShow:()=>!upg.ghostActive, apply:()=>{spawnGhost();}},
   {icon:'❄', name:'Slow Aura',         desc:'Chills nearby enemies',        canShow:()=>!upg.slowAura, apply:()=>{upg.slowAura=true;}},
@@ -213,7 +211,7 @@ function spawnBoss(idx){
   const def=EDEFS[type];
   enemies.push({
     id:bossId++,type,isBoss:true,x:ex,y:ey,vx:0,vy:0,
-    hp:def.hp,maxHp:def.hp,hitTimer:0,stunTimer:0,wobble:rng()*Math.PI*2,
+    hp:def.hp,maxHp:def.hp,hitTimer:0,stunTimer:0,flashTimer:0,wobble:rng()*Math.PI*2,
     color:def.color,radius:def.radius,speed:def.speed,reward:def.reward,
     shape:def.shape,sides:def.sides||8,extraDmg:def.extraDmg,mass:def.mass,_rm:false,
     dodgeCd:0,zigTimer:0,zigDir:1,teleportCd:idx%2===1?4:0,teleportGlow:0,
@@ -307,7 +305,7 @@ function makeEnemy(type,ex,ey){
     id:enemyId++,type,isBoss:false,
     x:ex,y:ey,vx:0,vy:0,
     hp:d.hp*hm,maxHp:d.hp*hm,
-    hitTimer:0,stunTimer:0,wobble:rng()*Math.PI*2,
+    hitTimer:0,stunTimer:0,flashTimer:0,wobble:rng()*Math.PI*2,
     color,radius:d.radius+(type==='bruteNgon'?Math.floor(t2*0.35):0),
     speed:d.speed*sm,reward:d.reward,shape:d.shape,sides,
     extraDmg:d.extraDmg,mass:d.mass+(type==='bruteNgon'?t2*0.18:0),
@@ -358,6 +356,7 @@ function spawnEscortPack(){
 // ── ENEMY UPDATE ──────────────────────────────────────────────────────
 function updateEnemy(en,dt){
   if(en.hitTimer>0)en.hitTimer-=dt;
+  if(en.flashTimer>0)en.flashTimer=Math.max(0,en.flashTimer-dt*8);
   if(en.bodyHitCd>0)en.bodyHitCd-=dt;
   if(en.stunTimer>0){en.stunTimer-=dt;en.vx*=0.78;en.vy*=0.78;return;}
 
@@ -504,6 +503,20 @@ function hitEnemy(en,dmg,fromProjectile=true){
     en.shieldHp--;spawnImpact(en.x,en.y,'#88eeff');tone(800,0.04,'square',0.08);return;
   }
   en.hp-=dmg*getTierDmg();
+  en.flashTimer=1;  // 0→1 at hit, fades to 0 via updateEnemy
+  // Sub-bass thud — distinct from the music bus, goes through sfxBus
+  if(!sfxMuted&&audioCtx){
+    try{
+      const t=audioCtx.currentTime;
+      const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+      o.type='sine';
+      o.frequency.setValueAtTime(95,t);
+      o.frequency.exponentialRampToValueAtTime(38,t+0.10);
+      g.gain.setValueAtTime(0.32,t);
+      g.gain.exponentialRampToValueAtTime(0.001,t+0.13);
+      o.connect(g);g.connect(sfxBus);o.start(t);o.stop(t+0.14);
+    }catch(_){}
+  }
   spawnImpact(en.x,en.y,en.color);
   if(en.hp<=0)killEnemy(en);
 }
@@ -650,10 +663,18 @@ function spawnHealFX(x,y){
 
 // ── CONTROLS / INPUT ─────────────────────────────────────────────────
 const controls={
-  aim:{x:0,y:0,r:64,active:false,pid:null,dx:0,dy:0},
-  move:{active:false,pid:null,rawX:0,rawY:0},
+  aim:  {x:0,y:0,r:64,active:false,pid:null,dx:0,dy:0},
+  // Pulse is a small inner circle centred on the joystick (no right-side button)
+  pulse:{x:0,y:0,r:26},
+  move: {active:false,pid:null,rawX:0,rawY:0},
 };
-function layoutControls(){controls.aim.x=26+controls.aim.r;controls.aim.y=H-26-controls.aim.r;}
+function layoutControls(){
+  controls.aim.x=26+controls.aim.r;
+  controls.aim.y=H-26-controls.aim.r;
+  // Pulse sits at the top-right edge of the joystick disc
+  controls.pulse.x=controls.aim.x+controls.aim.r*0.52;
+  controls.pulse.y=controls.aim.y-controls.aim.r*0.52;
+}
 function inCircle(px,py,cx,cy,r){const dx=px-cx,dy=py-cy;return dx*dx+dy*dy<=r*r;}
 
 const ptrs={};
@@ -661,18 +682,33 @@ canvas.addEventListener('pointerdown',onPD,{passive:false});
 canvas.addEventListener('pointermove',onPM,{passive:false});
 canvas.addEventListener('pointerup',onPU,{passive:false});
 canvas.addEventListener('pointercancel',onPU,{passive:false});
-canvas.addEventListener('contextmenu',e=>{e.preventDefault();triggerPulse();});
+// Long-press / contextmenu no longer fires pulse — dedicated canvas button does.
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
 
 function onPD(e){
   e.preventDefault();initAudio();
   ptrs[e.pointerId]={x:e.clientX,y:e.clientY};
   if(state!==S.PLAY)return;
   const x=e.clientX,y=e.clientY;
-  if(!controls.aim.active&&inCircle(x,y,controls.aim.x,controls.aim.y,controls.aim.r*1.15)){
+
+  // Pulse inner circle (sits inside joystick — checked FIRST so it takes priority)
+  if(inCircle(x,y,controls.pulse.x,controls.pulse.y,controls.pulse.r*1.15)){
+    triggerPulse();return;
+  }
+
+  // Aim joystick (bottom-left)
+  if(!controls.aim.active&&inCircle(x,y,controls.aim.x,controls.aim.y,controls.aim.r*1.2)){
     controls.aim.active=true;controls.aim.pid=e.pointerId;controls.aim.dx=0;controls.aim.dy=0;
     shard.aimLocked=true;shard.autoAimGrace=0;manualFireImmediate();shard.fireCooldown=0;return;
   }
-  if(Object.keys(ptrs).length>=2){triggerPulse();return;}
+
+  // Pulse button (bottom-right) — ONLY way to fire shockwave on touch
+  if(inCircle(x,y,controls.pulse.x,controls.pulse.y,controls.pulse.r*1.2)){
+    triggerPulse();return;
+  }
+
+  // Anywhere else → move ship. Works even while joystick is already held
+  // so a second finger can always claim ship movement.
   if(!controls.move.active){
     controls.move.active=true;controls.move.pid=e.pointerId;
     controls.move.rawX=x;controls.move.rawY=y;shard.isDragged=true;
@@ -732,14 +768,9 @@ window.addEventListener('keydown',e=>{
 window.addEventListener('keyup',e=>{keys[e.code]=false;});
 
 // ── UI MENU ───────────────────────────────────────────────────────────
-const pulseBtn=document.createElement('button');
-pulseBtn.style.cssText='position:fixed;top:18px;left:18px;width:56px;height:56px;border-radius:50%;background:transparent;border:2px solid #00e5ff;cursor:pointer;pointer-events:all;z-index:5;font-size:22px;color:#00e5ff;box-shadow:0 0 12px rgba(0,229,255,.5);';
-pulseBtn.textContent='◎';
-pulseBtn.addEventListener('pointerdown',e=>{e.stopPropagation();triggerPulse();});
-document.body.appendChild(pulseBtn);
 
 const pauseBtn=document.createElement('button');
-pauseBtn.style.cssText='position:fixed;top:18px;right:18px;width:52px;height:52px;border-radius:4px;background:transparent;border:2px solid rgba(0,229,255,.5);cursor:pointer;pointer-events:all;z-index:5;font-size:20px;color:#00e5ff;';
+pauseBtn.style.cssText='position:fixed;top:14px;right:14px;width:44px;height:44px;border-radius:6px;background:rgba(4,2,15,.7);border:1.5px solid rgba(0,229,255,.35);cursor:pointer;pointer-events:all;z-index:5;font-size:18px;color:#00e5ff;backdrop-filter:blur(4px);';
 pauseBtn.textContent='⏸';
 pauseBtn.addEventListener('pointerdown',e=>{e.stopPropagation();togglePause();});
 document.body.appendChild(pauseBtn);
@@ -829,10 +860,6 @@ function update(dt){
   if(keys['KeyA']||keys['ArrowLeft'])  shard.x=clamp(shard.x-km,shard.radius,W-shard.radius);
   if(keys['KeyD']||keys['ArrowRight']) shard.x=clamp(shard.x+km,shard.radius,W-shard.radius);
   if(shard.overdriveMode){shard.overdriveTimer-=dt;if(shard.overdriveTimer<=0)shard.overdriveMode=false;}
-  if(shard.shieldHp===0&&shard.shieldRegenTime>0){
-    shard.shieldRegenTimer+=dt;
-    if(shard.shieldRegenTimer>=shard.shieldRegenTime){shard.shieldHp=1;shard.shieldRegenTimer=0;tone(440,.3,'sine',.1);}
-  }
   shard.trailX.unshift(shard.x);shard.trailY.unshift(shard.y);
   if(shard.trailX.length>20){shard.trailX.pop();shard.trailY.pop();}
   if(shard.hasPlasmaTrail){
@@ -1006,7 +1033,7 @@ function startGame(){
   shard.x=W/2;shard.y=H*0.32;
   shard.aimAngle=-Math.PI/2;shard.aimLocked=false;shard.autoAimGrace=0;
   shard.fireCooldown=0;shard.fireRate=Tuning.get("playerFireRate");shard.isDragged=false;shard.hasPlasmaTrail=false;shard.trailDmgMult=1;
-  shard.overdriveMode=false;shard.overdriveTimer=0;shard.shieldHp=0;shard.shieldRegenTime=12;shard.shieldRegenTimer=0;
+  shard.overdriveMode=false;shard.overdriveTimer=0;
   shard.trailX=[];shard.trailY=[];
   controls.aim.active=false;controls.aim.pid=null;controls.aim.dx=0;controls.aim.dy=0;
   controls.move.active=false;controls.move.pid=null;
@@ -1212,12 +1239,6 @@ function render(){
 
   drawControls();
   drawHUD();
-
-  const pReady=pulse.cd<=0;
-  pulseBtn.style.opacity=pReady?'1':'0.35';
-  pulseBtn.style.borderColor=pReady?th.accent:'rgba(100,100,120,0.5)';
-  pulseBtn.style.boxShadow=pReady?`0 0 16px rgba(${th.accentRgb},.7)`:'none';
-  pulseBtn.style.color=pReady?th.accent:'rgba(140,140,160,0.7)';
 }
 
 function drawTower(){
@@ -1261,30 +1282,32 @@ function drawShipAt(x,y,angle,alpha){
   og.addColorStop(0,'#fff');og.addColorStop(.4,cc);og.addColorStop(1,'transparent');
   ctx.shadowBlur=18;ctx.shadowColor=cc;ctx.fillStyle=og;
   ctx.beginPath();ctx.arc(0,0,r*.38,0,Math.PI*2);ctx.fill();ctx.restore();
-  if(shard.shieldHp>0){ctx.save();ctx.strokeStyle='rgba(100,200,255,.72)';ctx.lineWidth=3;ctx.shadowBlur=16;ctx.shadowColor='#88ddff';ctx.beginPath();ctx.arc(0,0,r+8,0,Math.PI*2);ctx.stroke();ctx.restore();}
+  if(shard.overdriveMode){ctx.save();ctx.strokeStyle='rgba(255,160,0,.55)';ctx.lineWidth=2;ctx.shadowBlur=14;ctx.shadowColor='#ffaa00';ctx.beginPath();ctx.arc(0,0,r+8,0,Math.PI*2);ctx.stroke();ctx.restore();}
   ctx.restore();
 }
 function drawEnemy(en){
   ctx.save();ctx.translate(en.x,en.y);
   const r=en.radius;
+  const perf=!!(T().perfMode);
   if(en.stunTimer>0||en.hitTimer>0){const s=1+Math.sin(en.hitTimer*30)*.1;ctx.scale(s,1/s);}
-  if(en.teleportGlow>0){ctx.shadowBlur=28*en.teleportGlow;ctx.shadowColor='#aa00ff';}
+  if(!perf&&en.teleportGlow>0){ctx.shadowBlur=28*en.teleportGlow;ctx.shadowColor='#aa00ff';}
   ctx.rotate(en.wobble*.05+elapsed*(en.type==='bruteNgon'||en.type==='anchored'||en.type==='sentinelBrute'?.35:en.type==='skitter'?2:en.type==='spiralHunter'?(1.1+(1-clamp(en.hp/en.maxHp,0,1))*2.2):0.8));
-  if(en.type==='spiralHunter'){
+  if(!perf&&en.type==='spiralHunter'){
     const enrT=1-clamp(en.hp/en.maxHp,0,1);
     ctx.save();ctx.strokeStyle=`rgba(255,80,255,${0.25+enrT*0.45})`;ctx.lineWidth=1.5+enrT*1.5;
     ctx.shadowBlur=14+enrT*18;ctx.shadowColor='#ff55ff';
     ctx.beginPath();ctx.arc(0,0,r*1.45,0,Math.PI*2);ctx.stroke();ctx.restore();
     ctx.shadowBlur=14+enrT*12;ctx.shadowColor='#ff55ff';
   }
-  if(en.anchored){
+  if(!perf&&en.anchored){
     ctx.save();ctx.strokeStyle=en.color+'88';ctx.lineWidth=1;ctx.shadowBlur=10;ctx.shadowColor=en.color;
     ctx.setLineDash([3,5]);ctx.beginPath();ctx.arc(0,0,r*1.5,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);ctx.restore();
   }
-  ctx.shadowBlur=12;ctx.shadowColor=en.color;ctx.fillStyle=en.color;
+  if(!perf){ctx.shadowBlur=12;ctx.shadowColor=en.color;}
+  ctx.fillStyle=en.color;
   drawEPath(en);ctx.fill();
   ctx.strokeStyle=en.isBoss?'rgba(255,255,255,.38)':'rgba(255,255,255,.18)';ctx.lineWidth=en.isBoss?2.5:1;ctx.stroke();
-  if(en.shieldHp>0){
+  if(!perf&&en.shieldHp>0){
     ctx.save();
     const shieldA=.3+.3*(en.shieldHp/Math.max(en.shieldMax,1));
     ctx.strokeStyle=`rgba(100,220,255,${shieldA})`;ctx.lineWidth=3;ctx.shadowBlur=14;ctx.shadowColor='#44ddff';
@@ -1294,17 +1317,25 @@ function drawEnemy(en){
     const bw=r*2.4;ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(-bw/2,-r-9,bw,4);
     ctx.fillStyle=en.color;ctx.fillRect(-bw/2,-r-9,bw*(en.hp/en.maxHp),4);
   }
-  // Brand enemy skin — GPU-blit from pre-rendered sprite (no per-frame fillText)
-  const glyph = T().enemySkin[en.type];
-  if(glyph){
-    const sprite = getGlyphSprite(glyph, r);
-    // Draw size in CSS px: fill the enemy body with padding
-    const drawSize = r * 3.3;
+  // Red flash on hit
+  if(en.flashTimer>0){
     ctx.save();
-    ctx.globalAlpha = 0.97;
-    // drawImage is a GPU blit — no font rasterisation cost per frame
-    ctx.drawImage(sprite, -drawSize / 2, -drawSize / 2, drawSize, drawSize);
+    ctx.globalAlpha=en.flashTimer*0.78;
+    ctx.fillStyle='#ff1a1a';
+    if(!perf){ctx.shadowBlur=20;ctx.shadowColor='#ff0000';}
+    drawEPath(en);ctx.fill();
     ctx.restore();
+  }
+  // Brand emoji skin (skipped in perf mode)
+  if(!perf){
+    const glyph=T().enemySkin[en.type];
+    if(glyph){
+      const sprite=getGlyphSprite(glyph,r);
+      const drawSize=r*3.3;
+      ctx.save();ctx.globalAlpha=0.97;
+      ctx.drawImage(sprite,-drawSize/2,-drawSize/2,drawSize,drawSize);
+      ctx.restore();
+    }
   }
   ctx.restore();
 }
@@ -1323,15 +1354,59 @@ function drawEPath(en){
 function drawControls(){
   if(state!==S.PLAY&&state!==S.PAUSE)return;
   const th=T();
-  ctx.save();ctx.globalAlpha=.13;ctx.fillStyle=th.accent;
-  ctx.beginPath();ctx.arc(controls.aim.x,controls.aim.y,controls.aim.r,0,Math.PI*2);ctx.fill();
-  ctx.globalAlpha=.28;ctx.strokeStyle=th.accent;ctx.lineWidth=1.5;
-  ctx.beginPath();ctx.arc(controls.aim.x,controls.aim.y,controls.aim.r,0,Math.PI*2);ctx.stroke();
-  ctx.globalAlpha=.4;ctx.fillStyle=th.accent;
-  ctx.font=`${clamp(W*.02,8,12)}px ${th.hudFont}`;ctx.textAlign='center';
-  ctx.fillText('AIM/FIRE',controls.aim.x,controls.aim.y+controls.aim.r+15);
-  ctx.shadowBlur=11;ctx.shadowColor=th.accent;ctx.fillStyle=th.accent+'88';
-  ctx.beginPath();ctx.arc(controls.aim.x+controls.aim.dx,controls.aim.y+controls.aim.dy,controls.aim.r*.35,0,Math.PI*2);ctx.fill();
+  ctx.save();
+
+  // ── Aim joystick (bottom-left) ─────────────────────────────────────
+  const ax=controls.aim.x,ay=controls.aim.y,ar=controls.aim.r;
+  ctx.globalAlpha=.12;ctx.fillStyle=th.accent;
+  ctx.beginPath();ctx.arc(ax,ay,ar,0,Math.PI*2);ctx.fill();
+  ctx.globalAlpha=.26;ctx.strokeStyle=th.accent;ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.arc(ax,ay,ar,0,Math.PI*2);ctx.stroke();
+
+  // Thumb nub
+  ctx.globalAlpha=.42;ctx.fillStyle=th.accent+'99';ctx.shadowBlur=0;
+  ctx.beginPath();ctx.arc(ax+controls.aim.dx,ay+controls.aim.dy,ar*.35,0,Math.PI*2);ctx.fill();
+
+  // Label below
+  ctx.globalAlpha=.34;ctx.fillStyle=th.accent;
+  ctx.font=`${clamp(W*.018,7,11)}px ${th.hudFont}`;ctx.textAlign='center';
+  ctx.fillText('AIM/FIRE',ax,ay+ar+14);
+
+  // ── Pulse mini-button (overlaid on joystick, top-right quadrant) ───
+  const px=controls.pulse.x,py=controls.pulse.y,pr=controls.pulse.r;
+  const maxCd=Tuning.get('pulseMaxCd')*Tuning.get('pulseCooldownMult')*upg.pulseCdMult;
+  const frac=maxCd>0?pulse.cd/maxCd:0;
+  const ready=pulse.cd<=0;
+
+  // Background disc
+  ctx.globalAlpha=ready?.30:.16;
+  ctx.fillStyle=ready?th.accent:'#223344';
+  ctx.beginPath();ctx.arc(px,py,pr,0,Math.PI*2);ctx.fill();
+
+  // Border
+  ctx.globalAlpha=ready?.65:.25;
+  ctx.strokeStyle=ready?th.accent:'rgba(80,110,140,.6)';
+  ctx.lineWidth=ready?2:1.5;
+  ctx.beginPath();ctx.arc(px,py,pr,0,Math.PI*2);ctx.stroke();
+
+  // Recharge arc
+  if(!ready&&frac>0){
+    ctx.globalAlpha=.85;
+    ctx.strokeStyle=th.accent;ctx.lineWidth=2.5;ctx.lineCap='round';
+    ctx.shadowBlur=8;ctx.shadowColor=th.accent;
+    ctx.beginPath();ctx.arc(px,py,pr-2,-Math.PI/2,-Math.PI/2+Math.PI*2*(1-frac));ctx.stroke();
+    ctx.shadowBlur=0;ctx.lineCap='butt';
+  }
+  if(ready){ctx.shadowBlur=12;ctx.shadowColor=th.accent;}
+
+  // Icon ◎
+  ctx.globalAlpha=ready?1:.40;
+  ctx.fillStyle=ready?th.accent:'rgba(120,160,180,.8)';
+  ctx.font=`bold ${Math.round(pr*1.1)}px sans-serif`;
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('◎',px,py);
+  ctx.textBaseline='alphabetic';ctx.shadowBlur=0;
+
   ctx.restore();
 }
 function drawAimLine(){
@@ -1362,22 +1437,24 @@ function drawHUD(){
   }
   ctx.restore();
   ctx.save();
-  ctx.font=`${clamp(W*.026,11,17)}px ${fnt}`;ctx.fillStyle=acc+'b0';ctx.textAlign='right';
+  // Timer sits left of the pause button (pause btn is 52px at right:18 → avoid W-76)
+  ctx.font=`${clamp(W*.026,11,17)}px ${fnt}`;ctx.fillStyle=acc+'cc';ctx.textAlign='right';
   const m=Math.floor(elapsed/60),sec=Math.floor(elapsed%60).toString().padStart(2,'0');
-  ctx.fillText(`${m}:${sec}`,W-16,30);
-  ctx.font=`${clamp(W*.02,9,13)}px ${fnt}`;ctx.fillStyle=acc+'80';
-  ctx.fillText(`WAVE ${waveStage+1}`,W-16,44);
+  ctx.fillText(`${m}:${sec}`,W-78,30);
+  ctx.font=`${clamp(W*.018,8,12)}px ${fnt}`;ctx.fillStyle=acc+'80';
+  ctx.fillText(`WAVE ${waveStage+1}`,W-78,46);
   ctx.textAlign='left';ctx.restore();
   let nextMs=-1,prevMs=0;
   for(let i=0;i<MILESTONES.length;i++){if(!milestonesHit.has(i)){nextMs=MILESTONES[i];prevMs=i>0?MILESTONES[i-1]:0;break;}}
   if(nextMs>0){
-    const bw=clamp(W*.2,110,190),bh=5,bx=20,by=64;
+    const bw=clamp(W*.22,120,200),bh=5,bx=20,by=68;
     const prog=clamp((score-prevMs)/(nextMs-prevMs),0,1);
     ctx.save();
-    ctx.fillStyle=acc+'18';ctx.fillRect(bx,by,bw,bh);
-    ctx.shadowColor=acc;ctx.shadowBlur=5;ctx.fillStyle=acc;ctx.fillRect(bx,by,bw*prog,bh);
-    ctx.font=`${clamp(W*.017,7,10)}px ${fnt}`;ctx.fillStyle=acc+'80';
-    ctx.fillText(`NEXT: ${nextMs}`,bx,by+15);
+    ctx.fillStyle=acc+'22';ctx.fillRect(bx,by,bw,bh);
+    ctx.shadowColor=acc;ctx.shadowBlur=6;ctx.fillStyle=acc+'cc';ctx.fillRect(bx,by,bw*prog,bh);
+    ctx.shadowBlur=0;
+    ctx.font=`bold ${clamp(W*.018,7,11)}px ${fnt}`;ctx.fillStyle=acc+'ee';
+    ctx.fillText(`NEXT ${nextMs}`,bx,by-3);
     ctx.restore();
   }
   if(upgradeFlash.timer>0){
@@ -1387,25 +1464,10 @@ function drawHUD(){
     ctx.fillText('⬡  '+upgradeFlash.text+'  ⬡',CX,H*.1);
     ctx.restore();upgradeFlash.timer-=1/60;
   }
-  const maxCd=Tuning.get('pulseMaxCd')*Tuning.get('pulseCooldownMult')*upg.pulseCdMult,frac=pulse.cd/maxCd;
-  if(frac>0){
-    ctx.save();ctx.shadowBlur=7;ctx.shadowColor=acc;ctx.strokeStyle=acc+'cc';ctx.lineWidth=2.5;ctx.lineCap='round';
-    ctx.beginPath();ctx.arc(18+28,18+28,24,-Math.PI/2,-Math.PI/2+Math.PI*2*(1-frac));ctx.stroke();
-    ctx.restore();
-  }
   const brandId=window.BrandEngine.getCurrentId();
   if(bgPhase>0||brandId!=='default'){
     ctx.save();ctx.font=`${clamp(W*.016,6,10)}px ${fnt}`;ctx.fillStyle=acc+'44';ctx.textAlign='right';
     ctx.fillText(`PHASE ${bgPhase} · ${T().name}`,W-16,H-10);ctx.textAlign='left';ctx.restore();
-  }
-  if(shard.shieldHp===0&&shard.shieldRegenTime>0){
-    const prog=clamp(shard.shieldRegenTimer/shard.shieldRegenTime,0,1);
-    const bw=clamp(W*.13,75,115);
-    ctx.save();
-    ctx.fillStyle='rgba(80,160,255,.1)';ctx.fillRect(20,H-28,bw,4);
-    ctx.fillStyle='rgba(80,160,255,.48)';ctx.fillRect(20,H-28,bw*prog,4);
-    ctx.font=`${clamp(W*.015,6,9)}px ${fnt}`;ctx.fillStyle='rgba(100,200,255,.42)';ctx.fillText('SHIELD',20,H-32);
-    ctx.restore();
   }
   if(upg.shotCount>1||upg.projTier>1){
     ctx.save();ctx.font=`${clamp(W*.016,6,10)}px ${fnt}`;ctx.fillStyle=getTierColor()+'99';
