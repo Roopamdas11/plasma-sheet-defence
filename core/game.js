@@ -85,6 +85,12 @@ function getGlyphSprite(glyph, displayRadius) {
 // ── AUDIO ─────────────────────────────────────────────────────────────
 let audioCtx=null,masterGain=null,musicBus=null,sfxBus=null;
 let sfxMuted=false,musicMuted=false;
+// Performance override — if true, forces perf mode regardless of brand
+let perfOverride=false;
+// Helper: is perf mode active? (brand flag OR manual override)
+function isPerfMode(){return perfOverride||!!(T().perfMode);}
+// Particles toggle — can be disabled independently
+let particlesEnabled=true;
 function initAudio(){
   if(audioCtx){if(audioCtx.state==='suspended')audioCtx.resume();return;}
   try{
@@ -133,7 +139,7 @@ function towerHeal(amount,enemyMass){
 // ── PLAYER ────────────────────────────────────────────────────────────
 let shard={
   x:0,y:0,aimAngle:-Math.PI/2,aimLocked:false,autoAimGrace:0,
-  fireCooldown:0,fireRate:0.55,radius:26,isDragged:false,
+  fireCooldown:0,fireRate:0.55,radius:36,isDragged:false,
   trailX:[],trailY:[],hasPlasmaTrail:false,trailDmgMult:1,
   overdriveMode:false,overdriveTimer:0,
 };
@@ -141,28 +147,53 @@ let shard={
 // ── UPGRADES ─────────────────────────────────────────────────────────
 let upg={
   fireRate:1,dartSpeed:1,knockbackMult:1,pulseCdMult:1,
-  shotCount:1,pierce:false,slowAura:false,
+  shotCount:1,pierce:false,slowAura:false,attractForce:false,
   ghostActive:false,ghostLife:0,ghostX:0,ghostY:0,
   ramDmg:Tuning.get('ramDamageBase'),projTier:1,
+  homingLevel:0,  // 0=off, 1-3=strength
+  splitOnKill:false, burstDarts:false,
+  stackCounts:{},  // tracks stacks per upgrade id
 };
+const MAX_STACK=5;
 const MILESTONES=[100,300,600,1000,1600,2500,3800,5500,7500,10000];
 let milestonesHit=new Set();
 let upgradeFlash={text:'',timer:0};
 
-const UPG_POOL=[
-  {icon:'🔥',name:'Fire Rate +15%',    desc:'Stacks multiplicatively',      apply:()=>{upg.fireRate*=0.85;}},
-  {icon:'⚡',name:'Dart Speed +15%',   desc:'Faster projectiles',           apply:()=>{upg.dartSpeed*=1.15;}},
-  {icon:'💥',name:'Ram Damage +0.3',   desc:'Body collision (nerfed base)', apply:()=>{upg.ramDmg+=0.3;}},
-  {icon:'🌀',name:'Knockback +20%',    desc:'Heavier impacts',              apply:()=>{upg.knockbackMult*=1.2;}},
-  {icon:'◈', name:'+1 Shot',           desc:'Up to 4 total shots',          canShow:()=>upg.shotCount<4, apply:()=>{upg.shotCount=Math.min(4,upg.shotCount+1);}},
-  {icon:'◆', name:'Pierce Rounds',     desc:'Darts pass through foes',      canShow:()=>!upg.pierce, apply:()=>{upg.pierce=true;}},
-  {icon:'🌊',name:'Plasma Trail',      desc:'Wake damages enemies',         canShow:()=>!shard.hasPlasmaTrail, apply:()=>{shard.hasPlasmaTrail=true;}},
-  {icon:'〰',name:'Trail Dmg +25%',    desc:'Stronger plasma wake',         canShow:()=>shard.hasPlasmaTrail, apply:()=>{shard.trailDmgMult*=1.25;}},
-  {icon:'◎', name:'Pulse CD -10%',     desc:'Shockwave charges faster',     apply:()=>{upg.pulseCdMult*=0.90;}},
-  {icon:'👻',name:'Ghost Ship',        desc:'Twin fires alongside you',     canShow:()=>!upg.ghostActive, apply:()=>{spawnGhost();}},
-  {icon:'❄', name:'Slow Aura',         desc:'Chills nearby enemies',        canShow:()=>!upg.slowAura, apply:()=>{upg.slowAura=true;}},
-  {icon:'🔮',name:'Plasma Amplifier',  desc:'Boosts projectile tier',       apply:()=>{upg.projTier=Math.min(4,upg.projTier+1);}},
-  {icon:'☄', name:'Overdrive',         desc:'8s burst fire mode',           apply:()=>{shard.overdriveMode=true;shard.overdriveTimer=8;}},
+// Returns tier color interpolated by projTier
+function getTierColors(){
+  const t=T();const arr=t.projColors||['#00e5ff','#00ff99','#ffee00','#ff6622'];
+  return arr;
+}
+
+const UPG_DEFS=[
+  {id:'fireRate', icon:'🔥', name:'Fire Rate',       medal:'🔥', color:'#ff6622',
+   desc:'Fires 15% faster',              max:5, apply:()=>{upg.fireRate*=0.85;}},
+  {id:'dartSpd',  icon:'⚡', name:'Dart Speed',      medal:'⚡', color:'#ffee00',
+   desc:'Projectiles +15% speed',        max:5, apply:()=>{upg.dartSpeed*=1.15;}},
+  {id:'shotCount',icon:'◈', name:'Multi-Shot',       medal:'◈', color:'#00e5ff',
+   desc:'+1 simultaneous dart (max 4)',  max:3, canAdd:()=>upg.shotCount<4, apply:()=>{upg.shotCount=Math.min(4,upg.shotCount+1);}},
+  {id:'pierce',   icon:'◆', name:'Pierce',           medal:'◆', color:'#cc44ff',
+   desc:'Darts pass through enemies',    max:1, canAdd:()=>!upg.pierce, apply:()=>{upg.pierce=true;}},
+  {id:'homing',   icon:'🎯', name:'Homing Darts',    medal:'🎯', color:'#ff44aa',
+   desc:'Darts curve toward enemies',    max:3, apply:()=>{upg.homingLevel=Math.min(3,(upg.homingLevel||0)+1);}},
+  {id:'burst',    icon:'💥', name:'Burst Rounds',    medal:'💥', color:'#ffaa00',
+   desc:'Killing a dart splits into 3', max:2, canAdd:()=>!upg.burstDarts, apply:()=>{upg.burstDarts=true;}},
+  {id:'plasma',   icon:'🔮', name:'Plasma Amp',      medal:'🔮', color:'#aa44ff',
+   desc:'Boosts projectile tier + neon', max:4, canAdd:()=>upg.projTier<4, apply:()=>{upg.projTier=Math.min(4,(upg.projTier||1)+1);}},
+  {id:'trail',    icon:'🌊', name:'Plasma Trail',    medal:'🌊', color:'#00ffcc',
+   desc:'Wake behind ship damages foes', max:3, apply:()=>{shard.hasPlasmaTrail=true;shard.trailDmgMult*=1.25;}},
+  {id:'attract',  icon:'🧲', name:'Attract Force',   medal:'🧲', color:'#ff88cc',
+   desc:'Pulls weak enemies toward ship',max:3, apply:()=>{upg.attractForce=true;upg.attractStrength=((upg.attractStrength||0)+40);}},
+  {id:'slowAura', icon:'❄', name:'Cryo Aura',       medal:'❄', color:'#44ccff',
+   desc:'Chills all nearby enemies',     max:3, apply:()=>{upg.slowAura=true;upg.slowAuraR=((upg.slowAuraR||0)+28);}},
+  {id:'knockback',icon:'🌀', name:'Knockback',       medal:'🌀', color:'#88eeff',
+   desc:'Heavier impact force +20%',     max:5, apply:()=>{upg.knockbackMult*=1.2;}},
+  {id:'pulseCd',  icon:'◎', name:'Pulse Charge',    medal:'◎', color:'#00e5ff',
+   desc:'Shockwave recharges 10% faster',max:5, apply:()=>{upg.pulseCdMult*=0.90;}},
+  {id:'ghost',    icon:'👻', name:'Ghost Ship',      medal:'👻', color:'#aaffee',
+   desc:'A twin fires alongside you',    max:1, canAdd:()=>!upg.ghostActive, apply:()=>{spawnGhost();}},
+  {id:'overdrive',icon:'☄', name:'Overdrive',       medal:'☄', color:'#ff4400',
+   desc:'8s turbo burst fire',           max:5, apply:()=>{shard.overdriveMode=true;shard.overdriveTimer=8;}},
 ];
 
 // ── PULSE ─────────────────────────────────────────────────────────────
@@ -362,7 +393,17 @@ function updateEnemy(en,dt){
 
   const dx=towerX-en.x,dy=towerY-en.y,d=Math.hypot(dx,dy)||1;
   let sm=1;
-  if(upg.slowAura&&dist(en.x,en.y,shard.x,shard.y)<82+en.radius) sm=0.38;
+  const auraR=upg.slowAuraR||82;
+  if(upg.slowAura&&dist(en.x,en.y,shard.x,shard.y)<auraR+en.radius) sm=0.38;
+
+  // Attract force — pulls weaker enemies toward ship
+  if(upg.attractForce&&en.mass<=3){
+    const adx=shard.x-en.x,ady=shard.y-en.y,ad=Math.hypot(adx,ady)||1;
+    if(ad<200){
+      const str=(upg.attractStrength||40)*(1-ad/200)*0.003;
+      en.vx+=adx/ad*str;en.vy+=ady/ad*str;
+    }
+  }
 
   if(en.shieldHp<en.shieldMax&&en.shieldMax>0){
     en.shieldTimer+=dt;
@@ -522,6 +563,8 @@ function hitEnemy(en,dmg,fromProjectile=true){
 }
 function killEnemy(en){
   if(en._rm)return;en._rm=true;
+  // Haptic feedback — short sharp jerk
+  try{if(navigator.vibrate)navigator.vibrate(en.isBoss?[40,20,40]:18);}catch(_){}
   const now=elapsed;
   if(now-lastKillTime<2.0)combo=Math.min(1.7,combo+0.12);
   else combo=1;
@@ -556,7 +599,8 @@ function getTierDmg(){return[1,1.4,2.0,3.0][clamp(upg.projTier-1,0,3)];}
 function fireDart(x,y,angle){
   const spr=(rng()-.5)*0.11,spd=Tuning.get('dartSpeedBase')*upg.dartSpeed;
   const a=angle+spr;
-  projectiles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,life:1.4,dead:false,pierced:false});
+  projectiles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,
+    life:1.6,dead:false,pierced:false,isBurst:false,homing:upg.homingLevel||0});
 }
 function doFireShot(x,y,angle){
   const c=upg.shotCount,spread=0.20;
@@ -663,16 +707,16 @@ function spawnHealFX(x,y){
 
 // ── CONTROLS / INPUT ─────────────────────────────────────────────────
 const controls={
-  aim:  {x:0,y:0,r:64,active:false,pid:null,dx:0,dy:0},
-  pulse:{x:0,y:0,r:38},   // standalone circle to the RIGHT of the joystick
+  aim:  {x:0,y:0,r:74,active:false,pid:null,dx:0,dy:0},  // larger joystick
+  pulse:{x:0,y:0,r:44},   // bottom-RIGHT corner
   move: {active:false,pid:null,rawX:0,rawY:0},
 };
 function layoutControls(){
   controls.aim.x=26+controls.aim.r;
   controls.aim.y=H-26-controls.aim.r;
-  // Pulse sits to the right of the joystick with a gap
-  controls.pulse.x=controls.aim.x+controls.aim.r+18+controls.pulse.r;
-  controls.pulse.y=controls.aim.y;
+  // Pulse in bottom-right corner, symmetric to joystick
+  controls.pulse.x=W-26-controls.pulse.r;
+  controls.pulse.y=H-26-controls.pulse.r;
 }
 function inCircle(px,py,cx,cy,r){const dx=px-cx,dy=py-cy;return dx*dx+dy*dy<=r*r;}
 
@@ -690,7 +734,7 @@ function onPD(e){
   if(state!==S.PLAY)return;
   const x=e.clientX,y=e.clientY;
 
-  // Pulse button (right of joystick — checked before move fallback)
+  // Pulse button (bottom-right — checked before move fallback)
   if(inCircle(x,y,controls.pulse.x,controls.pulse.y,controls.pulse.r*1.2)){
     triggerPulse();return;
   }
@@ -779,18 +823,26 @@ const helpBtn=document.createElement('button');
 helpBtn.id='help-btn';helpBtn.textContent='?';
 document.body.appendChild(helpBtn);
 
-const helpOverlay=document.getElementById('help-overlay');
-const helpCloseBtn=document.getElementById('help-close-btn');
-let helpVisible=false;
-function showHelp(){helpVisible=true;helpOverlay.classList.remove('hidden');helpOverlay.classList.add('visible');}
-function hideHelp(){helpVisible=false;helpOverlay.classList.add('hidden');helpOverlay.classList.remove('visible');}
-helpBtn.addEventListener('pointerdown',e=>{e.stopPropagation();helpVisible?hideHelp():showHelp();});
-helpCloseBtn.addEventListener('click',e=>{e.stopPropagation();hideHelp();});
-helpOverlay.addEventListener('pointerdown',e=>{if(e.target===helpOverlay)hideHelp();});
+const tutOverlay=document.getElementById('tutorial-overlay');
+const tutSkipBtn=document.getElementById('tut-skip-btn');
+let tutVisible=false;
 
-// Auto-show help once on very first play
+function showTutorial(){
+  tutVisible=true;
+  tutOverlay.classList.remove('hidden');
+}
+function hideTutorial(){
+  tutVisible=false;
+  tutOverlay.classList.add('hidden');
+  try{localStorage.setItem('psd_help_seen','1');}catch(_){}
+}
+
+helpBtn.addEventListener('pointerdown',e=>{e.stopPropagation();tutVisible?hideTutorial():showTutorial();});
+tutSkipBtn.addEventListener('pointerdown',e=>{e.stopPropagation();hideTutorial();});
+
+// Auto-show once on first ever play, stays until dismissed
 try{if(!localStorage.getItem('psd_help_seen')){
-  setTimeout(()=>{showHelp();setTimeout(()=>{hideHelp();localStorage.setItem('psd_help_seen','1');},5000);},800);
+  setTimeout(showTutorial, 900);
 }}catch(_){}
 
 // Upgrade pill
@@ -802,13 +854,30 @@ document.getElementById('restart-btn').addEventListener('click',()=>{document.ge
 document.getElementById('play-btn').addEventListener('click',startGame);
 document.getElementById('share-btn').addEventListener('click',handleShare);
 document.getElementById('hs-reset-btn').addEventListener('click',()=>{if(confirm('Reset all high scores?')){try{localStorage.removeItem('psd_scores');}catch(e){}alert('Cleared.');}});
+document.getElementById('upg-done-btn').addEventListener('click',()=>{
+  document.getElementById('upgrade-overlay').classList.add('hidden');
+  unduckMusic();state=S.PLAY;updateUpgradePin();
+});
 
 const sfxBtn=document.getElementById('sfx-btn');
 const musicBtn=document.getElementById('music-btn');
 const assistBtn=document.getElementById('assist-btn');
+const visualsBtn=document.getElementById('visuals-btn');
+const particlesBtn=document.getElementById('particles-btn');
 sfxBtn.addEventListener('click',()=>{sfxMuted=!sfxMuted;sfxBtn.textContent=sfxMuted?'SFX ✕':'SFX';sfxBtn.classList.toggle('on',!sfxMuted);});
 musicBtn.addEventListener('click',()=>{musicMuted=!musicMuted;musicBtn.textContent=musicMuted?'MUSIC ✕':'MUSIC';musicBtn.classList.toggle('on',!musicMuted);if(musicBus)musicBus.gain.setTargetAtTime(musicMuted?0:0.55,audioCtx.currentTime,0.3);});
 assistBtn.addEventListener('click',()=>{aimAssistOn=!aimAssistOn;assistBtn.textContent=aimAssistOn?'AIM':'AIM ✕';assistBtn.classList.toggle('on',aimAssistOn);});
+visualsBtn.addEventListener('click',()=>{
+  perfOverride=!perfOverride;
+  visualsBtn.textContent=perfOverride?'VISUALS ✕':'VISUALS';
+  visualsBtn.classList.toggle('on',!perfOverride);
+});
+particlesBtn.addEventListener('click',()=>{
+  particlesEnabled=!particlesEnabled;
+  if(!particlesEnabled)particles=[];
+  particlesBtn.textContent=particlesEnabled?'PARTICLES':'PARTICLES ✕';
+  particlesBtn.classList.toggle('on',particlesEnabled);
+});
 
 // When brand changes during game, refresh CSS
 window.addEventListener('brandChanged',()=>{
@@ -834,23 +903,44 @@ function updateUpgradePin(){
 }
 function openUpgradeOverlay(){
   state=S.UPGRADE;duckMusic();
-  const eligible=UPG_POOL.filter(u=>!u.canShow||u.canShow());
-  const pool=[...eligible],chosen=[];
-  while(chosen.length<3&&pool.length>0)chosen.push(pool.splice(Math.floor(rng()*pool.length),1)[0]);
+  renderUpgradeCards();
+  document.getElementById('upgrade-overlay').classList.remove('hidden');
+}
+function renderUpgradeCards(){
   const cont=document.getElementById('upg-cards');cont.innerHTML='';
-  chosen.forEach(u=>{
-    const card=document.createElement('div');card.className='upg-card';
-    card.innerHTML=`<div class="ci">${u.icon}</div><div class="cn">${u.name}</div><div class="cd">${u.desc}</div>`;
-    card.addEventListener('click',()=>{
-      u.apply();upgradeFlash.text=u.name;upgradeFlash.timer=2.5;
-      upgradePendingCount--;
-      document.getElementById('upgrade-overlay').classList.add('hidden');
-      unduckMusic();state=S.PLAY;updateUpgradePin();
-    });
+  const tokensLeft=upgradePendingCount;
+  const doneBtn=document.getElementById('upg-done-btn');
+  if(doneBtn)doneBtn.textContent=tokensLeft>0?`${tokensLeft} PICK${tokensLeft>1?'S':''} LEFT — DONE`:'DONE';
+
+  UPG_DEFS.forEach(u=>{
+    const stacks=upg.stackCounts[u.id]||0;
+    const maxed=stacks>=u.max;
+    const unavail=u.canAdd&&!u.canAdd();
+    const card=document.createElement('div');
+    card.className='upg-card2'+(maxed||unavail?' upg-maxed':'');
+    const pips=Array.from({length:u.max},(_,i)=>`<span class="upg-pip${i<stacks?' upg-pip-on':''}"></span>`).join('');
+    card.innerHTML=`
+      <div class="upg-c2-icon" style="color:${u.color};text-shadow:0 0 10px ${u.color}88">${u.icon}</div>
+      <div class="upg-c2-body">
+        <div class="upg-c2-name" style="color:${u.color}">${u.name}</div>
+        <div class="upg-c2-desc">${u.desc}</div>
+        <div class="upg-c2-pips">${pips}</div>
+      </div>
+      <div class="upg-c2-badge">${maxed?'MAX':(unavail?'—':stacks>0?'+'+stacks:'NEW')}</div>`;
+    if(!maxed&&!unavail&&tokensLeft>0){
+      card.addEventListener('click',()=>{
+        u.apply();upgradeFlash.text=u.name;upgradeFlash.timer=2;
+        upg.stackCounts[u.id]=(upg.stackCounts[u.id]||0)+1;
+        upgradePendingCount--;
+        renderUpgradeCards();
+        if(upgradePendingCount<=0){
+          document.getElementById('upgrade-overlay').classList.add('hidden');
+          unduckMusic();state=S.PLAY;updateUpgradePin();
+        }
+      });
+    }
     cont.appendChild(card);
   });
-  document.getElementById('upg-remain').textContent=upgradePendingCount>1?`${upgradePendingCount-1} MORE QUEUED`:'';
-  document.getElementById('upgrade-overlay').classList.remove('hidden');
 }
 
 function manualFireImmediate(){if(state!==S.PLAY)return;doFireShot(shard.x,shard.y,shard.aimAngle);tone(720,.04,'square',.07);}
@@ -956,7 +1046,21 @@ function update(dt){
   if(tower.healGlow>0)tower.healGlow-=dt;
   tower.regenTimer+=dt;
   if(tower.regenTimer>=Tuning.get('towerRegenInterval')&&tower.hp<tower.maxHp){tower.hp=Math.min(tower.maxHp,tower.hp+Tuning.get('towerRegenAmount'));tower.regenTimer=0;}
-  projectiles.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;});
+  projectiles.forEach(p=>{
+    // Homing steering
+    if(p.homing>0&&!p.dead){
+      const ne=nearestEnemy(p.x,p.y);
+      if(ne){
+        const dx=ne.x-p.x,dy=ne.y-p.y,d=Math.hypot(dx,dy)||1;
+        const str=p.homing*0.06;
+        p.vx+=(dx/d)*str;p.vy+=(dy/d)*str;
+        // Re-normalise speed
+        const spd=Math.hypot(p.vx,p.vy)||1,tgt=Tuning.get('dartSpeedBase')*upg.dartSpeed;
+        p.vx=p.vx/spd*tgt;p.vy=p.vy/spd*tgt;
+      }
+    }
+    p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;
+  });
   projectiles=projectiles.filter(p=>p.life>0&&!p.dead);
   projectiles.forEach(p=>{
     if(p.dead)return;
@@ -964,7 +1068,18 @@ function update(dt){
       if(p.dead||en._rm)return;
       if(dist(p.x,p.y,en.x,en.y)<en.radius+5){
         hitEnemy(en,Tuning.get('projectileDamageMult'),true);
-        if(!upg.pierce||p.pierced)p.dead=true;else p.pierced=true;
+        if(!upg.pierce||p.pierced){
+          p.dead=true;
+          // Burst: spawn 3 mini darts outward
+          if(upg.burstDarts&&!p.isBurst){
+            for(let bi=0;bi<3;bi++){
+              const ba=Math.atan2(p.vy,p.vx)+(bi-1)*0.65;
+              const bs=Tuning.get('dartSpeedBase')*upg.dartSpeed*0.7;
+              projectiles.push({x:p.x,y:p.y,vx:Math.cos(ba)*bs,vy:Math.sin(ba)*bs,
+                life:0.55,dead:false,pierced:false,isBurst:true,homing:0});
+            }
+          }
+        }else p.pierced=true;
       }
     });
   });
@@ -1035,13 +1150,28 @@ function generatePoster(){
   const ws=snide.split(' '),mW=820;let ln='',lns=[];
   ws.forEach(w=>{const test=ln?ln+' '+w:w;if(c.measureText(test).width>mW){lns.push(ln);ln=w;}else ln=test;});lns.push(ln);
   lns.forEach((l,i)=>c.fillText(l,540,1450+i*50));
-  c.font='24px Orbitron,sans-serif';c.fillStyle='rgba(0,229,255,.35)';c.fillText('PLASMA SHEET DEFENSE',540,1875);
+  c.font='28px Orbitron,sans-serif';c.fillStyle='rgba(0,229,255,.55)';c.fillText('pd1.rameing.com',540,1875);
   return oc.toDataURL('image/png');
 }
 async function handleShare(){
   const dataUrl=_posterUrl||(_posterUrl=generatePoster());
-  const caption=`Plasma Sheet Defense — Score: ${lastFinalScore} | ${formatTime(lastFinalTime)} survived\n${_snideText}`;
-  try{const blob=await(await fetch(dataUrl)).blob();const file=new File([blob],'plasma.png',{type:'image/png'});if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({title:'Plasma Sheet Defense',text:caption,files:[file]});return;}}catch(e){}
+  const invites=[
+    'Need a quick stress buster? Try this — 2 minutes, no sign up needed 🎮',
+    'This game is weirdly relaxing. Give it 2 minutes 👾',
+    'Pure arcade fun — I dare you to beat my score 🚀',
+    'Quick fun during a break? This hits different ⚡',
+    'No downloads, just open and play. Great for a quick recharge 🎯',
+  ];
+  const invite=invites[Math.floor(rng()*invites.length)];
+  const caption=`${invite}\n\n🎮 Plasma Sheet Defense\n⚡ Score: ${lastFinalScore} · ${formatTime(lastFinalTime)} survived\n${_snideText}\n\n▶ Play free: https://pd1.rameing.com`;
+  try{
+    const blob=await(await fetch(dataUrl)).blob();
+    const file=new File([blob],'plasma.png',{type:'image/png'});
+    if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
+      await navigator.share({title:'Plasma Sheet Defense',text:caption,files:[file]});return;
+    }
+  }catch(e){}
+  // Fallback: download poster + copy text
   const a=document.createElement('a');a.href=dataUrl;a.download='plasma_defense.png';a.click();
   try{await navigator.clipboard.writeText(caption);}catch(e){}
 }
@@ -1061,7 +1191,7 @@ function startGame(){
   shard.trailX=[];shard.trailY=[];
   controls.aim.active=false;controls.aim.pid=null;controls.aim.dx=0;controls.aim.dy=0;
   controls.move.active=false;controls.move.pid=null;
-  upg={fireRate:1,dartSpeed:1,knockbackMult:1,pulseCdMult:1,shotCount:1,pierce:false,slowAura:false,ghostActive:false,ghostLife:0,ghostX:0,ghostY:0,ramDmg:Tuning.get("ramDamageBase"),projTier:1};
+  upg={fireRate:1,dartSpeed:1,knockbackMult:1,pulseCdMult:1,shotCount:1,pierce:false,slowAura:false,slowAuraR:82,attractForce:false,attractStrength:0,ghostActive:false,ghostLife:0,ghostX:0,ghostY:0,ramDmg:Tuning.get('ramDamageBase'),projTier:1,homingLevel:0,burstDarts:false,stackCounts:{}};
   pulse.cd=0;pulse.rings=[];
   enemies=[];projectiles=[];particles=[];
   spawnTimer=0.5;  // first enemy arrives in 0.5s, not 2s
@@ -1108,6 +1238,21 @@ function resumeGame(){
 // ── RENDER ────────────────────────────────────────────────────────────
 let plasmaT=0,recentScoreSnap=0;
 
+// ── STARFIELD ────────────────────────────────────────────────────────
+const STARS=(()=>{
+  const s=[];
+  for(let i=0;i<110;i++){
+    s.push({
+      x:Math.random(),y:Math.random(),
+      r:Math.random()*1.4+0.2,
+      twinkle:Math.random()*Math.PI*2,
+      speed:Math.random()*0.8+0.3,
+      bright:Math.random()*0.5+0.25,
+    });
+  }
+  return s;
+})();
+
 function render(){
   ctx.setTransform(DPR,0,0,DPR,shake.x,shake.y);
   ctx.clearRect(-2,-2,W+4,H+4);
@@ -1116,54 +1261,80 @@ function render(){
   const ph=Math.min(bgPhase,th.bgColors.length-1);
   const [c0,c1,c2]=th.bgColors[ph];
 
-  // Background gradient
-  const bg=ctx.createRadialGradient(CX,H*.4,0,CX,H*.4,Math.max(W,H)*.9);
-  bg.addColorStop(0,c0);bg.addColorStop(.55,c1||c0);bg.addColorStop(1,c2||c1||c0);
+  // ── Background fill ──────────────────────────────────────────────
+  const bg=ctx.createRadialGradient(CX,H*.38,0,CX,H*.55,Math.max(W,H)*.95);
+  bg.addColorStop(0,c0);bg.addColorStop(.45,c1||c0);bg.addColorStop(1,c2||c1||c0);
   ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  // Nebula bloom — expensive radial gradient — skip in perf mode
+  if(!isPerfMode()){
+    ctx.save();
+    const nebulaA=.055+Math.sin(plasmaT*.4)*.018;
+    const nb=ctx.createRadialGradient(CX,H*.35,0,CX,H*.35,Math.min(W,H)*.62);
+    nb.addColorStop(0,th.accent+'28');nb.addColorStop(.5,th.accent+'0a');nb.addColorStop(1,'transparent');
+    ctx.globalAlpha=nebulaA*3;ctx.fillStyle=nb;ctx.fillRect(0,0,W,H);
+    ctx.restore();
+  }
+
+  // Starfield — skip in perf mode
+  if(!isPerfMode()){
+    ctx.save();
+    STARS.forEach(s=>{
+      const twk=Math.sin(plasmaT*s.speed+s.twinkle);
+      const alpha=(s.bright+twk*.18)*clamp(.6+(bgPhase*.06),0,1);
+      ctx.globalAlpha=clamp(alpha,0,1);
+      ctx.fillStyle='#ffffff';
+      ctx.shadowBlur=s.r>1?3:0;ctx.shadowColor='#aaddff';
+      ctx.beginPath();ctx.arc(s.x*W,s.y*H,s.r*(1+twk*.1),0,Math.PI*2);ctx.fill();
+    });
+    ctx.shadowBlur=0;
+    ctx.restore();
+  }
 
   // Phase tint overlay
   if(bgPhase>0){
     ctx.save();
-    ctx.globalAlpha=(.45+Math.sin(plasmaT*2)*.35)*.3;
-    ctx.fillStyle=th.accent+'55';ctx.fillRect(0,0,W,H);
+    ctx.globalAlpha=(.28+Math.sin(plasmaT*2)*.22)*.38;
+    ctx.fillStyle=th.accent+'44';ctx.fillRect(0,0,W,H);
     ctx.restore();
   }
 
-  // Animated grid
-  ctx.save();ctx.globalAlpha=.05;ctx.strokeStyle=th.gridColor;ctx.lineWidth=.5;
-  for(let gx=0;gx<W;gx+=60){ctx.beginPath();ctx.moveTo(gx+Math.sin(plasmaT+gx*.01)*2.5,0);ctx.lineTo(gx+Math.sin(plasmaT+gx*.01)*2.5,H);ctx.stroke();}
-  for(let gy=0;gy<H;gy+=60){ctx.beginPath();ctx.moveTo(0,gy+Math.sin(plasmaT*.8+gy*.01)*2.5);ctx.lineTo(W,gy+Math.sin(plasmaT*.8+gy*.01)*2.5);ctx.stroke();}
+  // Grid — subtle perspective lines
+  ctx.save();ctx.strokeStyle=th.gridColor;ctx.lineWidth=.5;
+  const gridOff=(plasmaT*12)%60;
+  ctx.globalAlpha=.06;
+  for(let gx=0;gx<W;gx+=60){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,H);ctx.stroke();}
+  for(let gy=-gridOff;gy<H;gy+=60){ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(W,gy);ctx.stroke();}
   ctx.restore();
 
-  // Range rings
-  ctx.save();ctx.strokeStyle='rgba(0,180,255,.07)';ctx.lineWidth=1;ctx.setLineDash([4,8]);
+  // Range rings (dimmer now that bg is busier)
+  ctx.save();ctx.strokeStyle='rgba(0,180,255,.05)';ctx.lineWidth=1;ctx.setLineDash([4,10]);
   [.28,.48,.68].forEach(f=>{ctx.beginPath();ctx.arc(towerX,towerY,Math.min(W,H)*f,0,Math.PI*2);ctx.stroke();});
   ctx.setLineDash([]);ctx.restore();
 
   // Pulse rings — style can be 'ripple' or 'ring' from brand
   const pStyle=th.pulseStyle||'ring';
+  const prPerf=isPerfMode();
   pulse.rings.forEach(ring=>{
     const a=1-ring.r/ring.maxR;
     ctx.save();
     if(pStyle==='ripple'){
-      // Multiple faint concentric rings give slow-distortion feel
       for(let ri=0;ri<3;ri++){
         const off=ri*18*(1-a);
         ctx.strokeStyle=th.pulseColor+(a*.38*(1-ri*.28))+')';
         ctx.lineWidth=2*(1-ri*.25)*a+.3;
-        ctx.shadowColor=th.accent;ctx.shadowBlur=8*a;
+        if(!prPerf){ctx.shadowColor=th.accent;ctx.shadowBlur=8*a;}
         ctx.beginPath();ctx.arc(towerX,towerY,ring.r-off,0,Math.PI*2);ctx.stroke();
       }
     }else if(pStyle==='burst'){
-      // Extra thick energetic ring + inner glow
       ctx.strokeStyle=th.pulseColor+(a*.8)+')';ctx.lineWidth=5*a+1;
-      ctx.shadowColor=th.accent;ctx.shadowBlur=22*a;
+      if(!prPerf){ctx.shadowColor=th.accent;ctx.shadowBlur=22*a;}
       ctx.beginPath();ctx.arc(towerX,towerY,ring.r,0,Math.PI*2);ctx.stroke();
       ctx.strokeStyle=th.pulseColor+(a*.3)+')';ctx.lineWidth=12*a;ctx.shadowBlur=0;
       ctx.beginPath();ctx.arc(towerX,towerY,ring.r,0,Math.PI*2);ctx.stroke();
     }else{
       ctx.strokeStyle=th.pulseColor+(a*.65)+')';ctx.lineWidth=3*a+.5;
-      ctx.shadowColor=th.accent;ctx.shadowBlur=14*a;
+      if(!prPerf){ctx.shadowColor=th.accent;ctx.shadowBlur=14*a;}
       ctx.beginPath();ctx.arc(towerX,towerY,ring.r,0,Math.PI*2);ctx.stroke();
     }
     ctx.restore();
@@ -1189,14 +1360,14 @@ function render(){
     for(let i=1;i<shard.trailX.length;i++){
       ctx.globalAlpha=(1-i/shard.trailX.length)*.48;
       ctx.strokeStyle=th.accent;ctx.lineWidth=shard.radius*.5*(1-i/shard.trailX.length);
-      ctx.shadowColor=th.accent;ctx.shadowBlur=7;
+      if(!isPerfMode()){ctx.shadowColor=th.accent;ctx.shadowBlur=7;}
       ctx.beginPath();ctx.moveTo(shard.trailX[i-1],shard.trailY[i-1]);ctx.lineTo(shard.trailX[i],shard.trailY[i]);ctx.stroke();
     }
     ctx.restore();
   }
 
-  // Slow aura
-  if(upg.slowAura){
+  // Slow aura — expensive radial gradient, skip in perf mode
+  if(upg.slowAura&&!isPerfMode()){
     ctx.save();ctx.globalAlpha=.11;
     const sg=ctx.createRadialGradient(shard.x,shard.y,0,shard.x,shard.y,82+shard.radius);
     sg.addColorStop(0,th.accent);sg.addColorStop(1,'transparent');
@@ -1208,27 +1379,36 @@ function render(){
   drawAimLine();
   drawShipAt(shard.x,shard.y,shard.aimAngle,1);
 
-  // Thumb ring
+  // Thumb ring — single stroke in perf, double glow stroke in full quality
   if(shard.isDragged&&controls.move.active){
     const rx=controls.move.rawX,ry=controls.move.rawY;
     ctx.save();
-    ctx.shadowBlur=20;ctx.shadowColor=th.accent+'cc';ctx.strokeStyle=th.accent+'b0';ctx.lineWidth=2.5;
+    if(!isPerfMode()){ctx.shadowBlur=20;ctx.shadowColor=th.accent+'cc';}
+    ctx.strokeStyle=th.accent+'b0';ctx.lineWidth=2.5;
     ctx.beginPath();ctx.arc(rx,ry,26,0,Math.PI*2);ctx.stroke();
-    ctx.shadowBlur=8;ctx.strokeStyle=th.accent+'33';ctx.lineWidth=8;
-    ctx.beginPath();ctx.arc(rx,ry,26,0,Math.PI*2);ctx.stroke();
+    if(!isPerfMode()){
+      ctx.shadowBlur=8;ctx.strokeStyle=th.accent+'33';ctx.lineWidth=8;
+      ctx.beginPath();ctx.arc(rx,ry,26,0,Math.PI*2);ctx.stroke();
+    }
     ctx.restore();
   }
 
   // Projectiles
   const tc=getTierColor();
   const projStyle=th.projStyle||'dart';
+  const pPerf=isPerfMode();
   projectiles.forEach(p=>{
     ctx.save();
     const angle=Math.atan2(p.vy,p.vx);ctx.translate(p.x,p.y);ctx.rotate(angle);
-    ctx.globalAlpha=.32;ctx.strokeStyle=tc;ctx.lineWidth=1.5+upg.projTier*.35;
-    ctx.shadowColor=tc;ctx.shadowBlur=6;
-    ctx.beginPath();ctx.moveTo(-20-upg.projTier*3,0);ctx.lineTo(0,0);ctx.stroke();
-    ctx.globalAlpha=1;ctx.shadowBlur=9+upg.projTier*3;ctx.shadowColor=tc;ctx.fillStyle=tc;
+    // Trailing glow line — skip in perf
+    if(!pPerf){
+      ctx.globalAlpha=.32;ctx.strokeStyle=tc;ctx.lineWidth=1.5+upg.projTier*.35;
+      ctx.shadowColor=tc;ctx.shadowBlur=6;
+      ctx.beginPath();ctx.moveTo(-20-upg.projTier*3,0);ctx.lineTo(0,0);ctx.stroke();
+    }
+    ctx.globalAlpha=1;
+    if(!pPerf){ctx.shadowBlur=9+upg.projTier*3;ctx.shadowColor=tc;}
+    ctx.fillStyle=tc;
     if(projStyle==='fry'){
       // Slightly elongated thin rectangle, like a fry
       ctx.fillRect(-2,-12+upg.projTier,4,12);
@@ -1251,15 +1431,18 @@ function render(){
     ctx.restore();
   });
 
-  // Particles
-  particles.forEach(p=>{
-    ctx.save();ctx.globalAlpha=clamp(p.life*2.5,0,1);
-    if(p.type==='flash'){ctx.shadowBlur=26;ctx.shadowColor=p.color;ctx.fillStyle=p.color;ctx.globalAlpha*=.5;ctx.beginPath();ctx.arc(p.x,p.y,p.size*(1-p.life*.5+.1),0,Math.PI*2);ctx.fill();}
-    else if(p.type==='glow'){ctx.shadowBlur=13;ctx.shadowColor=p.color;ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.size/2,0,Math.PI*2);ctx.fill();}
-    else if(p.type==='rect'){ctx.translate(p.x,p.y);ctx.rotate(p.rot+p.life*4);ctx.shadowBlur=7;ctx.shadowColor=p.color;ctx.fillStyle=p.color;ctx.fillRect(-p.size/2,-p.size/3,p.size,p.size*.5);}
-    else{ctx.shadowBlur=4;ctx.shadowColor=p.color;ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.size/2,0,Math.PI*2);ctx.fill();}
-    ctx.restore();
-  });
+  // Particles — can be toggled off entirely for perf
+  if(particlesEnabled){
+    const pf=isPerfMode();
+    particles.forEach(p=>{
+      ctx.save();ctx.globalAlpha=clamp(p.life*2.5,0,1);
+      if(p.type==='flash'){if(!pf){ctx.shadowBlur=26;ctx.shadowColor=p.color;}ctx.fillStyle=p.color;ctx.globalAlpha*=.5;ctx.beginPath();ctx.arc(p.x,p.y,p.size*(1-p.life*.5+.1),0,Math.PI*2);ctx.fill();}
+      else if(p.type==='glow'){if(!pf){ctx.shadowBlur=13;ctx.shadowColor=p.color;}ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.size/2,0,Math.PI*2);ctx.fill();}
+      else if(p.type==='rect'){ctx.translate(p.x,p.y);ctx.rotate(p.rot+p.life*4);if(!pf){ctx.shadowBlur=7;ctx.shadowColor=p.color;}ctx.fillStyle=p.color;ctx.fillRect(-p.size/2,-p.size/3,p.size,p.size*.5);}
+      else{if(!pf){ctx.shadowBlur=4;ctx.shadowColor=p.color;}ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.size/2,0,Math.PI*2);ctx.fill();}
+      ctx.restore();
+    });
+  }
 
   drawControls();
   drawHUD();
@@ -1289,30 +1472,30 @@ function drawShipAt(x,y,angle,alpha){
   const r=shard.radius,od=shard.overdriveMode;
   const th=T();
   const gc=od?'#ff4400':th.shipGlow,cc=od?'#ffaa00':th.shipCore;
+  const sp=isPerfMode();
   ctx.save();
-  const bl=ctx.createRadialGradient(0,0,r*.3,0,0,r*1.8);
-  bl.addColorStop(0,od?'rgba(255,100,0,.13)':gc+'1c');bl.addColorStop(1,'transparent');
-  ctx.fillStyle=bl;ctx.beginPath();ctx.arc(0,0,r*1.8,0,Math.PI*2);ctx.fill();ctx.restore();
-  ctx.save();ctx.shadowBlur=13;ctx.shadowColor=gc;ctx.strokeStyle=gc;ctx.lineWidth=2.5;
+  if(!sp){const bl=ctx.createRadialGradient(0,0,r*.3,0,0,r*1.8);bl.addColorStop(0,od?'rgba(255,100,0,.13)':gc+'1c');bl.addColorStop(1,'transparent');ctx.fillStyle=bl;ctx.beginPath();ctx.arc(0,0,r*1.8,0,Math.PI*2);ctx.fill();}
+  ctx.restore();
+  ctx.save();if(!sp){ctx.shadowBlur=13;ctx.shadowColor=gc;}ctx.strokeStyle=gc;ctx.lineWidth=2.5;
   ctx.beginPath();ctx.arc(0,0,r*.72,0,Math.PI*2);ctx.stroke();
   ctx.globalAlpha=.38;ctx.strokeStyle=cc;ctx.lineWidth=1;
   ctx.beginPath();ctx.arc(0,0,r*.52,0,Math.PI*2);ctx.stroke();ctx.restore();
-  ctx.save();ctx.shadowBlur=15;ctx.shadowColor=gc;ctx.strokeStyle=gc;ctx.lineWidth=2.5;ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.save();if(!sp){ctx.shadowBlur=15;ctx.shadowColor=gc;}ctx.strokeStyle=gc;ctx.lineWidth=2.5;ctx.lineCap='round';ctx.lineJoin='round';
   ctx.beginPath();ctx.moveTo(0,r*.72);ctx.lineTo(0,-r*1.6);ctx.stroke();
   ctx.beginPath();ctx.moveTo(0,-r*1.6);ctx.lineTo(-r*.37,-r*1.04);ctx.moveTo(0,-r*1.6);ctx.lineTo(r*.37,-r*1.04);ctx.stroke();
   ctx.globalAlpha=.65;ctx.beginPath();ctx.moveTo(-r*.72,0);ctx.lineTo(-r*.45,r*.6);ctx.moveTo(r*.72,0);ctx.lineTo(r*.45,r*.6);ctx.stroke();ctx.restore();
   ctx.save();
   const og=ctx.createRadialGradient(0,0,0,0,0,r*.38);
   og.addColorStop(0,'#fff');og.addColorStop(.4,cc);og.addColorStop(1,'transparent');
-  ctx.shadowBlur=18;ctx.shadowColor=cc;ctx.fillStyle=og;
+  if(!sp){ctx.shadowBlur=18;ctx.shadowColor=cc;}ctx.fillStyle=og;
   ctx.beginPath();ctx.arc(0,0,r*.38,0,Math.PI*2);ctx.fill();ctx.restore();
-  if(shard.overdriveMode){ctx.save();ctx.strokeStyle='rgba(255,160,0,.55)';ctx.lineWidth=2;ctx.shadowBlur=14;ctx.shadowColor='#ffaa00';ctx.beginPath();ctx.arc(0,0,r+8,0,Math.PI*2);ctx.stroke();ctx.restore();}
+  if(shard.overdriveMode){ctx.save();ctx.strokeStyle='rgba(255,160,0,.55)';ctx.lineWidth=2;if(!sp){ctx.shadowBlur=14;ctx.shadowColor='#ffaa00';}ctx.beginPath();ctx.arc(0,0,r+8,0,Math.PI*2);ctx.stroke();ctx.restore();}
   ctx.restore();
 }
 function drawEnemy(en){
   ctx.save();ctx.translate(en.x,en.y);
   const r=en.radius;
-  const perf=!!(T().perfMode);
+  const perf=isPerfMode();
   if(en.stunTimer>0||en.hitTimer>0){const s=1+Math.sin(en.hitTimer*30)*.1;ctx.scale(s,1/s);}
   if(!perf&&en.teleportGlow>0){ctx.shadowBlur=28*en.teleportGlow;ctx.shadowColor='#aa00ff';}
   ctx.rotate(en.wobble*.05+elapsed*(en.type==='bruteNgon'||en.type==='anchored'||en.type==='sentinelBrute'?.35:en.type==='skitter'?2:en.type==='spiralHunter'?(1.1+(1-clamp(en.hp/en.maxHp,0,1))*2.2):0.8));
@@ -1382,52 +1565,70 @@ function drawControls(){
 
   // ── Aim joystick (bottom-left) ─────────────────────────────────────
   const ax=controls.aim.x,ay=controls.aim.y,ar=controls.aim.r;
-  // Outer disc
-  ctx.globalAlpha=.12;ctx.fillStyle=th.accent;
+  // Outer glow disc
+  ctx.globalAlpha=.08;ctx.fillStyle=th.accent;
   ctx.beginPath();ctx.arc(ax,ay,ar,0,Math.PI*2);ctx.fill();
-  ctx.globalAlpha=.30;ctx.strokeStyle=th.accent;ctx.lineWidth=1.5;
+  // Outer ring
+  ctx.globalAlpha=.35;ctx.strokeStyle=th.accent;ctx.lineWidth=2;
+  if(!isPerfMode()){ctx.shadowBlur=8;ctx.shadowColor=th.accent;}
   ctx.beginPath();ctx.arc(ax,ay,ar,0,Math.PI*2);ctx.stroke();
-  // Inner ring guide
-  ctx.globalAlpha=.10;ctx.strokeStyle=th.accent;ctx.lineWidth=1;
-  ctx.beginPath();ctx.arc(ax,ay,ar*.55,0,Math.PI*2);ctx.stroke();
-  // Thumb nub
-  ctx.globalAlpha=.50;ctx.fillStyle=th.accent;
-  ctx.shadowBlur=8;ctx.shadowColor=th.accent;
-  ctx.beginPath();ctx.arc(ax+controls.aim.dx,ay+controls.aim.dy,ar*.30,0,Math.PI*2);ctx.fill();
+  // Middle ring
+  ctx.shadowBlur=0;ctx.globalAlpha=.14;ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(ax,ay,ar*.6,0,Math.PI*2);ctx.stroke();
+  // Crosshair lines
+  ctx.globalAlpha=.10;ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(ax-ar,ay);ctx.lineTo(ax+ar,ay);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(ax,ay-ar);ctx.lineTo(ax,ay+ar);ctx.stroke();
+  // Thumb nub — bright with glow
+  const tx2=ax+controls.aim.dx,ty2=ay+controls.aim.dy;
+  ctx.shadowBlur=12;ctx.shadowColor=th.accent;
+  ctx.globalAlpha=.65;ctx.fillStyle=th.accent;
+  ctx.beginPath();ctx.arc(tx2,ty2,ar*.28,0,Math.PI*2);ctx.fill();
+  // Direction arrow from nub outward
+  if(Math.abs(controls.aim.dx)>4||Math.abs(controls.aim.dy)>4){
+    const ang=Math.atan2(controls.aim.dy,controls.aim.dx);
+    const tipX=ax+Math.cos(ang)*ar*.88,tipY=ay+Math.sin(ang)*ar*.88;
+    ctx.shadowBlur=16;ctx.shadowColor=th.accent;
+    ctx.globalAlpha=.85;ctx.strokeStyle=th.accent;ctx.lineWidth=2.5;ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(tx2,ty2);ctx.lineTo(tipX,tipY);ctx.stroke();
+    // Arrow head
+    ctx.save();ctx.translate(tipX,tipY);ctx.rotate(ang);
+    ctx.fillStyle=th.accent;ctx.globalAlpha=1;
+    ctx.beginPath();ctx.moveTo(10,0);ctx.lineTo(-5,5);ctx.lineTo(-5,-5);ctx.closePath();ctx.fill();
+    ctx.restore();
+  }
   ctx.shadowBlur=0;
   // Label
-  ctx.globalAlpha=.40;ctx.fillStyle=th.accent;
+  ctx.globalAlpha=.38;ctx.fillStyle=th.accent;
   ctx.font=`${clamp(W*.016,7,10)}px ${th.hudFont}`;ctx.textAlign='center';
   ctx.fillText('AIM / FIRE',ax,ay+ar+14);
 
-  // ── Pulse button (right of joystick, fully separate) ───────────────
+  // ── Pulse button (bottom-right) ────────────────────────────────────
   const px=controls.pulse.x,py=controls.pulse.y,pr=controls.pulse.r;
   const maxCd=Tuning.get('pulseMaxCd')*Tuning.get('pulseCooldownMult')*upg.pulseCdMult;
   const frac=maxCd>0?pulse.cd/maxCd:0;
   const ready=pulse.cd<=0;
-
-  // Outer disc
-  ctx.globalAlpha=ready?.22:.10;
+  // Glow disc
+  ctx.globalAlpha=ready?.18:.08;
   ctx.fillStyle=ready?th.accent:'#223344';
+  ctx.shadowBlur=ready?20:0;ctx.shadowColor=th.accent;
   ctx.beginPath();ctx.arc(px,py,pr,0,Math.PI*2);ctx.fill();
-  // Border
-  ctx.globalAlpha=ready?.70:.28;
+  // Border ring
+  ctx.globalAlpha=ready?.80:.30;
   ctx.strokeStyle=ready?th.accent:'rgba(80,120,150,.5)';
-  ctx.lineWidth=ready?2:1.5;
+  ctx.lineWidth=ready?2.5:1.5;ctx.shadowBlur=ready?14:0;
   ctx.beginPath();ctx.arc(px,py,pr,0,Math.PI*2);ctx.stroke();
-  // Recharge arc (sweeps clockwise from top as cooldown drains)
+  // Recharge sweep arc
   if(!ready&&frac>0){
-    ctx.globalAlpha=.85;
-    ctx.strokeStyle=th.accent;ctx.lineWidth=3;ctx.lineCap='round';
-    ctx.shadowBlur=9;ctx.shadowColor=th.accent;
+    ctx.globalAlpha=.85;ctx.strokeStyle=th.accent;ctx.lineWidth=3.5;ctx.lineCap='round';
+    ctx.shadowBlur=10;ctx.shadowColor=th.accent;
     ctx.beginPath();ctx.arc(px,py,pr-2,-Math.PI/2,-Math.PI/2+Math.PI*2*(1-frac));ctx.stroke();
     ctx.shadowBlur=0;ctx.lineCap='butt';
   }
-  if(ready){ctx.shadowBlur=16;ctx.shadowColor=th.accent;}
-  // Icon
-  ctx.globalAlpha=ready?1:.38;
-  ctx.fillStyle=ready?th.accent:'rgba(120,160,180,.7)';
-  ctx.font=`bold ${Math.round(pr*1.0)}px sans-serif`;
+  // Central icon — shockwave rings symbol
+  ctx.shadowBlur=ready?18:0;ctx.shadowColor=th.accent;
+  ctx.globalAlpha=ready?1:.40;ctx.fillStyle=ready?th.accent:'rgba(120,160,180,.7)';
+  ctx.font=`bold ${Math.round(pr*1.05)}px sans-serif`;
   ctx.textAlign='center';ctx.textBaseline='middle';
   ctx.fillText('◎',px,py);
   ctx.textBaseline='alphabetic';ctx.shadowBlur=0;
@@ -1439,70 +1640,127 @@ function drawControls(){
   ctx.restore();
 }
 function drawAimLine(){
-  const len=56+Math.sin(elapsed*6)*4;
-  const ax=shard.x+Math.cos(shard.aimAngle)*len,ay=shard.y+Math.sin(shard.aimAngle)*len;
   const th=T();
+  const locked=shard.aimLocked;
+  const lc=locked?'#ff3c78':th.accent;
+  const len=72+Math.sin(elapsed*6)*5;
+  const ax=shard.x+Math.cos(shard.aimAngle)*len;
+  const ay=shard.y+Math.sin(shard.aimAngle)*len;
   ctx.save();
-  ctx.strokeStyle=shard.aimLocked?'rgba(255,60,120,.6)':th.accent+'55';
-  ctx.lineWidth=1.5;ctx.setLineDash([5,5]);ctx.lineDashOffset=-elapsed*14;
-  ctx.shadowColor=shard.aimLocked?'#ff3c78':th.accent;ctx.shadowBlur=4;
+
+  // Pulsing dash line from ship to reticle
+  ctx.strokeStyle=locked?'rgba(255,60,120,.7)':th.accent+'88';
+  ctx.lineWidth=2;ctx.setLineDash([6,6]);ctx.lineDashOffset=-elapsed*18;
+  ctx.shadowColor=lc;ctx.shadowBlur=6;
   ctx.beginPath();ctx.moveTo(shard.x,shard.y);ctx.lineTo(ax,ay);ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.fillStyle=shard.aimLocked?'rgba(255,60,120,.8)':th.accent+'bb';
-  ctx.translate(ax,ay);ctx.rotate(shard.aimAngle);
-  ctx.beginPath();ctx.moveTo(8,0);ctx.lineTo(-3,4);ctx.lineTo(-3,-4);ctx.closePath();ctx.fill();
+  ctx.setLineDash([]);ctx.shadowBlur=0;
+
+  // Reticle — two arcs forming a crosshair bracket
+  ctx.save();ctx.translate(ax,ay);ctx.rotate(shard.aimAngle);
+  const rc=12+Math.sin(elapsed*4)*1.5;  // pulsing radius
+  ctx.strokeStyle=lc;ctx.lineWidth=2.5;ctx.shadowColor=lc;ctx.shadowBlur=12;
+  // Four corner bracket arcs
+  for(let q=0;q<4;q++){
+    ctx.save();ctx.rotate(q*Math.PI/2);
+    ctx.beginPath();ctx.arc(0,0,rc,-0.5,0.5);ctx.stroke();
+    ctx.restore();
+  }
+  // Center dot
+  ctx.shadowBlur=16;
+  ctx.fillStyle=lc;ctx.globalAlpha=locked?.9:.6;
+  ctx.beginPath();ctx.arc(0,0,3.5,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+
+  // Arrow tip pointing from ship toward reticle
+  ctx.save();ctx.translate(ax,ay);ctx.rotate(shard.aimAngle);
+  ctx.fillStyle=lc;ctx.globalAlpha=.9;ctx.shadowColor=lc;ctx.shadowBlur=10;
+  ctx.beginPath();ctx.moveTo(rc+14,0);ctx.lineTo(rc+5,5);ctx.lineTo(rc+5,-5);ctx.closePath();ctx.fill();
+  ctx.restore();
+
   ctx.restore();
 }
 function drawHUD(){
   const fnt=T().hudFont||'Orbitron,sans-serif';
   const acc=T().accent;
   ctx.save();
-  // Score — large, bright white with accent glow
+  // Score — top-left, weight 900
   ctx.font=`900 ${clamp(W*.045,20,32)}px ${fnt}`;
-  ctx.shadowColor=acc;ctx.shadowBlur=18;
-  ctx.fillStyle='#ffffff';
-  ctx.fillText(score,20,40);
+  ctx.shadowColor=acc;ctx.shadowBlur=18;ctx.fillStyle='#ffffff';
+  ctx.fillText(score,18,38);
+  // Combo — below score with clear gap
   if(combo>1.05){
-    ctx.font=`bold ${clamp(W*.024,10,15)}px ${fnt}`;ctx.fillStyle='#ffee00';ctx.shadowColor='#ffee00';ctx.shadowBlur=10;
-    ctx.fillText(`×${combo.toFixed(1)}`,22,58);
+    ctx.font=`bold ${clamp(W*.024,10,15)}px ${fnt}`;
+    ctx.fillStyle='#ffee00';ctx.shadowColor='#ffee00';ctx.shadowBlur=10;
+    ctx.fillText(`×${combo.toFixed(1)}`,20,60);
   }
   ctx.restore();
+
+  // Timer top-right — clears pause btn (right:14 w:44 → avoid W-68)
   ctx.save();
-  // Timer sits left of the pause button (pause btn is 52px at right:18 → avoid W-76)
   ctx.font=`${clamp(W*.026,11,17)}px ${fnt}`;ctx.fillStyle=acc+'cc';ctx.textAlign='right';
   const m=Math.floor(elapsed/60),sec=Math.floor(elapsed%60).toString().padStart(2,'0');
-  ctx.fillText(`${m}:${sec}`,W-78,30);
-  ctx.font=`${clamp(W*.018,8,12)}px ${fnt}`;ctx.fillStyle=acc+'80';
-  ctx.fillText(`WAVE ${waveStage+1}`,W-78,46);
+  ctx.fillText(`${m}:${sec}`,W-76,32);
+  ctx.font=`${clamp(W*.017,7,11)}px ${fnt}`;ctx.fillStyle=acc+'70';
+  ctx.fillText(`WAVE ${waveStage+1}`,W-76,48);
   ctx.textAlign='left';ctx.restore();
+
+  // Milestone progress bar — below score, with gap after combo line
   let nextMs=-1,prevMs=0;
   for(let i=0;i<MILESTONES.length;i++){if(!milestonesHit.has(i)){nextMs=MILESTONES[i];prevMs=i>0?MILESTONES[i-1]:0;break;}}
   if(nextMs>0){
-    const bw=clamp(W*.22,120,200),bh=5,bx=20,by=68;
+    const bw=clamp(W*.22,110,190),bh=4,bx=18,by=72;
     const prog=clamp((score-prevMs)/(nextMs-prevMs),0,1);
     ctx.save();
-    ctx.fillStyle=acc+'22';ctx.fillRect(bx,by,bw,bh);
-    ctx.shadowColor=acc;ctx.shadowBlur=6;ctx.fillStyle=acc+'cc';ctx.fillRect(bx,by,bw*prog,bh);
+    ctx.fillStyle=acc+'20';ctx.fillRect(bx,by,bw,bh);
+    ctx.shadowColor=acc;ctx.shadowBlur=5;ctx.fillStyle=acc+'cc';ctx.fillRect(bx,by,bw*prog,bh);
     ctx.shadowBlur=0;
-    ctx.font=`bold ${clamp(W*.018,7,11)}px ${fnt}`;ctx.fillStyle=acc+'ee';
-    ctx.fillText(`NEXT ${nextMs}`,bx,by-3);
+    ctx.font=`bold ${clamp(W*.016,6,10)}px ${fnt}`;ctx.fillStyle=acc+'cc';
+    ctx.fillText(`NEXT ${nextMs}`,bx,by-2);
     ctx.restore();
   }
+
+  // Upgrade medals bar — top-center strip showing all owned upgrades with stack counts
+  const owned=UPG_DEFS.filter(u=>(upg.stackCounts[u.id]||0)>0||(u.id==='pierce'&&upg.pierce)||(u.id==='slowAura'&&upg.slowAura)||(u.id==='attract'&&upg.attractForce)||(u.id==='ghost'&&upg.ghostActive));
+  if(owned.length>0){
+    const mSize=20,mGap=4,totalW=owned.length*(mSize+mGap)-mGap;
+    const startX=CX-totalW/2,startY=8;
+    ctx.save();
+    owned.forEach((u,i)=>{
+      const mx=startX+i*(mSize+mGap),my=startY;
+      const stk=upg.stackCounts[u.id]||1;
+      // Pill background
+      ctx.globalAlpha=.55;ctx.fillStyle='rgba(0,0,0,.6)';
+      roundRectHUD(mx-1,my-1,mSize+2,mSize+2,5);ctx.fill();
+      // Colored border
+      ctx.globalAlpha=.8;ctx.strokeStyle=u.color;ctx.lineWidth=1.5;
+      ctx.shadowBlur=6;ctx.shadowColor=u.color;
+      roundRectHUD(mx,my,mSize,mSize,4);ctx.stroke();
+      ctx.shadowBlur=0;
+      // Icon
+      ctx.globalAlpha=1;ctx.font=`${mSize*.6}px sans-serif`;
+      ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(u.icon,mx+mSize/2,my+mSize/2+1);
+      // Stack count badge
+      if(stk>1){
+        ctx.fillStyle=u.color;ctx.font=`bold 8px ${fnt}`;
+        ctx.textAlign='right';ctx.textBaseline='top';
+        ctx.fillText(stk,mx+mSize-1,my);
+      }
+    });
+    ctx.textBaseline='alphabetic';ctx.restore();
+  }
+
   if(upgradeFlash.timer>0){
     const a=clamp(upgradeFlash.timer,0,1);
     ctx.save();ctx.globalAlpha=a;ctx.font=`bold ${clamp(W*.03,11,19)}px ${fnt}`;
     ctx.textAlign='center';ctx.shadowColor='#00ff99';ctx.shadowBlur=14;ctx.fillStyle='#00ff99';
-    ctx.fillText('⬡  '+upgradeFlash.text+'  ⬡',CX,H*.1);
+    ctx.fillText('⬡ '+upgradeFlash.text+' ⬡',CX,H*.13);
     ctx.restore();upgradeFlash.timer-=1/60;
   }
   const brandId=window.BrandEngine.getCurrentId();
   if(bgPhase>0||brandId!=='default'){
     ctx.save();ctx.font=`${clamp(W*.016,6,10)}px ${fnt}`;ctx.fillStyle=acc+'44';ctx.textAlign='right';
     ctx.fillText(`PHASE ${bgPhase} · ${T().name}`,W-16,H-10);ctx.textAlign='left';ctx.restore();
-  }
-  if(upg.shotCount>1||upg.projTier>1){
-    ctx.save();ctx.font=`${clamp(W*.016,6,10)}px ${fnt}`;ctx.fillStyle=getTierColor()+'99';
-    ctx.fillText(`×${upg.shotCount} T${upg.projTier}`,20,H-10);ctx.restore();
   }
   if(dangerNearTowerCount>3){
     ctx.save();ctx.globalAlpha=.45+Math.sin(elapsed*8)*.25;
@@ -1511,6 +1769,7 @@ function drawHUD(){
     ctx.restore();
   }
 }
+function roundRectHUD(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.arcTo(x+w,y,x+w,y+r,r);ctx.lineTo(x+w,y+h-r);ctx.arcTo(x+w,y+h,x+w-r,y+h,r);ctx.lineTo(x+r,y+h);ctx.arcTo(x,y+h,x,y+h-r,r);ctx.lineTo(x,y+r);ctx.arcTo(x,y,x+r,y,r);ctx.closePath();}
 
 // ── LOOP ──────────────────────────────────────────────────────────────
 let lastT=0;
