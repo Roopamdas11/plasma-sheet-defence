@@ -72,8 +72,8 @@ window.BrandEngine = (function () {
     }
     _currentId = id;
 
-    // Persist choice — mark as explicit so it survives reload
-    try { localStorage.setItem('psd_brand', id); localStorage.setItem('psd_brand_set','1'); } catch (_) {}
+    // Persist choice
+    try { localStorage.setItem('psd_brand', id); } catch (_) {}
 
     // Inject CSS custom properties
     const b = getCurrentBrand();
@@ -122,16 +122,12 @@ window.BrandEngine = (function () {
 
   // ── Init: restore saved brand, apply, build UI ──────────────────────
   function init() {
-    // Always start with perf (the best looking theme) — user can switch via pause menu
-    const preferred = _registry.has('perf') ? 'perf' : 'default';
+    // Restore saved brand (fall back to default if brand was removed)
     try {
       const saved = localStorage.getItem('psd_brand');
-      // Only restore saved if it's not the first ever load (user explicitly changed it)
-      const hasExplicitSave = localStorage.getItem('psd_brand_set');
-      if (hasExplicitSave && saved && _registry.has(saved)) _currentId = saved;
-      else _currentId = preferred;
-    } catch (_) { _currentId = preferred; }
-    if (!_registry.has(_currentId)) _currentId = preferred;
+      if (saved && _registry.has(saved)) _currentId = saved;
+    } catch (_) {}
+    if (!_registry.has(_currentId)) _currentId = 'default';
     if (!_registry.has(_currentId) && _loadOrder.length) _currentId = _loadOrder[0];
 
     applyBrand(_currentId);

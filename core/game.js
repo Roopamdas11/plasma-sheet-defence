@@ -85,12 +85,6 @@ function getGlyphSprite(glyph, displayRadius) {
 // ── AUDIO ─────────────────────────────────────────────────────────────
 let audioCtx=null,masterGain=null,musicBus=null,sfxBus=null;
 let sfxMuted=false,musicMuted=false;
-// Performance override — if true, forces perf mode regardless of brand
-let perfOverride=false;
-// Helper: is perf mode active? (brand flag OR manual override)
-function isPerfMode(){return perfOverride||!!(T().perfMode);}
-// Particles toggle — can be disabled independently
-let particlesEnabled=true;
 function initAudio(){
   if(audioCtx){if(audioCtx.state==='suspended')audioCtx.resume();return;}
   try{
@@ -862,22 +856,9 @@ document.getElementById('upg-done-btn').addEventListener('click',()=>{
 const sfxBtn=document.getElementById('sfx-btn');
 const musicBtn=document.getElementById('music-btn');
 const assistBtn=document.getElementById('assist-btn');
-const visualsBtn=document.getElementById('visuals-btn');
-const particlesBtn=document.getElementById('particles-btn');
 sfxBtn.addEventListener('click',()=>{sfxMuted=!sfxMuted;sfxBtn.textContent=sfxMuted?'SFX ✕':'SFX';sfxBtn.classList.toggle('on',!sfxMuted);});
 musicBtn.addEventListener('click',()=>{musicMuted=!musicMuted;musicBtn.textContent=musicMuted?'MUSIC ✕':'MUSIC';musicBtn.classList.toggle('on',!musicMuted);if(musicBus)musicBus.gain.setTargetAtTime(musicMuted?0:0.55,audioCtx.currentTime,0.3);});
 assistBtn.addEventListener('click',()=>{aimAssistOn=!aimAssistOn;assistBtn.textContent=aimAssistOn?'AIM':'AIM ✕';assistBtn.classList.toggle('on',aimAssistOn);});
-visualsBtn.addEventListener('click',()=>{
-  perfOverride=!perfOverride;
-  visualsBtn.textContent=perfOverride?'VISUALS ✕':'VISUALS';
-  visualsBtn.classList.toggle('on',!perfOverride);
-});
-particlesBtn.addEventListener('click',()=>{
-  particlesEnabled=!particlesEnabled;
-  if(!particlesEnabled)particles=[];
-  particlesBtn.textContent=particlesEnabled?'PARTICLES':'PARTICLES ✕';
-  particlesBtn.classList.toggle('on',particlesEnabled);
-});
 
 // When brand changes during game, refresh CSS
 window.addEventListener('brandChanged',()=>{
@@ -1266,30 +1247,26 @@ function render(){
   bg.addColorStop(0,c0);bg.addColorStop(.45,c1||c0);bg.addColorStop(1,c2||c1||c0);
   ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
 
-  // Nebula bloom — expensive radial gradient — skip in perf mode
-  if(!isPerfMode()){
-    ctx.save();
-    const nebulaA=.055+Math.sin(plasmaT*.4)*.018;
-    const nb=ctx.createRadialGradient(CX,H*.35,0,CX,H*.35,Math.min(W,H)*.62);
-    nb.addColorStop(0,th.accent+'28');nb.addColorStop(.5,th.accent+'0a');nb.addColorStop(1,'transparent');
-    ctx.globalAlpha=nebulaA*3;ctx.fillStyle=nb;ctx.fillRect(0,0,W,H);
-    ctx.restore();
-  }
+  // Nebula bloom — soft radial glow centred slightly above tower
+  ctx.save();
+  const nebulaA=.055+Math.sin(plasmaT*.4)*.018;
+  const nb=ctx.createRadialGradient(CX,H*.35,0,CX,H*.35,Math.min(W,H)*.62);
+  nb.addColorStop(0,th.accent+'28');nb.addColorStop(.5,th.accent+'0a');nb.addColorStop(1,'transparent');
+  ctx.globalAlpha=nebulaA*3;ctx.fillStyle=nb;ctx.fillRect(0,0,W,H);
+  ctx.restore();
 
-  // Starfield — skip in perf mode
-  if(!isPerfMode()){
-    ctx.save();
-    STARS.forEach(s=>{
-      const twk=Math.sin(plasmaT*s.speed+s.twinkle);
-      const alpha=(s.bright+twk*.18)*clamp(.6+(bgPhase*.06),0,1);
-      ctx.globalAlpha=clamp(alpha,0,1);
-      ctx.fillStyle='#ffffff';
-      ctx.shadowBlur=s.r>1?3:0;ctx.shadowColor='#aaddff';
-      ctx.beginPath();ctx.arc(s.x*W,s.y*H,s.r*(1+twk*.1),0,Math.PI*2);ctx.fill();
-    });
-    ctx.shadowBlur=0;
-    ctx.restore();
-  }
+  // Starfield
+  ctx.save();
+  STARS.forEach(s=>{
+    const twk=Math.sin(plasmaT*s.speed+s.twinkle);
+    const alpha=(s.bright+twk*.18)*clamp(.6+(bgPhase*.06),0,1);
+    ctx.globalAlpha=clamp(alpha,0,1);
+    ctx.fillStyle='#ffffff';
+    ctx.shadowBlur=s.r>1?3:0;ctx.shadowColor='#aaddff';
+    ctx.beginPath();ctx.arc(s.x*W,s.y*H,s.r*(1+twk*.1),0,Math.PI*2);ctx.fill();
+  });
+  ctx.shadowBlur=0;
+  ctx.restore();
 
   // Phase tint overlay
   if(bgPhase>0){
@@ -1314,27 +1291,28 @@ function render(){
 
   // Pulse rings — style can be 'ripple' or 'ring' from brand
   const pStyle=th.pulseStyle||'ring';
-  const prPerf=isPerfMode();
   pulse.rings.forEach(ring=>{
     const a=1-ring.r/ring.maxR;
     ctx.save();
     if(pStyle==='ripple'){
+      // Multiple faint concentric rings give slow-distortion feel
       for(let ri=0;ri<3;ri++){
         const off=ri*18*(1-a);
         ctx.strokeStyle=th.pulseColor+(a*.38*(1-ri*.28))+')';
         ctx.lineWidth=2*(1-ri*.25)*a+.3;
-        if(!prPerf){ctx.shadowColor=th.accent;ctx.shadowBlur=8*a;}
+        ctx.shadowColor=th.accent;ctx.shadowBlur=8*a;
         ctx.beginPath();ctx.arc(towerX,towerY,ring.r-off,0,Math.PI*2);ctx.stroke();
       }
     }else if(pStyle==='burst'){
+      // Extra thick energetic ring + inner glow
       ctx.strokeStyle=th.pulseColor+(a*.8)+')';ctx.lineWidth=5*a+1;
-      if(!prPerf){ctx.shadowColor=th.accent;ctx.shadowBlur=22*a;}
+      ctx.shadowColor=th.accent;ctx.shadowBlur=22*a;
       ctx.beginPath();ctx.arc(towerX,towerY,ring.r,0,Math.PI*2);ctx.stroke();
       ctx.strokeStyle=th.pulseColor+(a*.3)+')';ctx.lineWidth=12*a;ctx.shadowBlur=0;
       ctx.beginPath();ctx.arc(towerX,towerY,ring.r,0,Math.PI*2);ctx.stroke();
     }else{
       ctx.strokeStyle=th.pulseColor+(a*.65)+')';ctx.lineWidth=3*a+.5;
-      if(!prPerf){ctx.shadowColor=th.accent;ctx.shadowBlur=14*a;}
+      ctx.shadowColor=th.accent;ctx.shadowBlur=14*a;
       ctx.beginPath();ctx.arc(towerX,towerY,ring.r,0,Math.PI*2);ctx.stroke();
     }
     ctx.restore();
@@ -1360,14 +1338,14 @@ function render(){
     for(let i=1;i<shard.trailX.length;i++){
       ctx.globalAlpha=(1-i/shard.trailX.length)*.48;
       ctx.strokeStyle=th.accent;ctx.lineWidth=shard.radius*.5*(1-i/shard.trailX.length);
-      if(!isPerfMode()){ctx.shadowColor=th.accent;ctx.shadowBlur=7;}
+      ctx.shadowColor=th.accent;ctx.shadowBlur=7;
       ctx.beginPath();ctx.moveTo(shard.trailX[i-1],shard.trailY[i-1]);ctx.lineTo(shard.trailX[i],shard.trailY[i]);ctx.stroke();
     }
     ctx.restore();
   }
 
-  // Slow aura — expensive radial gradient, skip in perf mode
-  if(upg.slowAura&&!isPerfMode()){
+  // Slow aura
+  if(upg.slowAura){
     ctx.save();ctx.globalAlpha=.11;
     const sg=ctx.createRadialGradient(shard.x,shard.y,0,shard.x,shard.y,82+shard.radius);
     sg.addColorStop(0,th.accent);sg.addColorStop(1,'transparent');
@@ -1379,36 +1357,27 @@ function render(){
   drawAimLine();
   drawShipAt(shard.x,shard.y,shard.aimAngle,1);
 
-  // Thumb ring — single stroke in perf, double glow stroke in full quality
+  // Thumb ring
   if(shard.isDragged&&controls.move.active){
     const rx=controls.move.rawX,ry=controls.move.rawY;
     ctx.save();
-    if(!isPerfMode()){ctx.shadowBlur=20;ctx.shadowColor=th.accent+'cc';}
-    ctx.strokeStyle=th.accent+'b0';ctx.lineWidth=2.5;
+    ctx.shadowBlur=20;ctx.shadowColor=th.accent+'cc';ctx.strokeStyle=th.accent+'b0';ctx.lineWidth=2.5;
     ctx.beginPath();ctx.arc(rx,ry,26,0,Math.PI*2);ctx.stroke();
-    if(!isPerfMode()){
-      ctx.shadowBlur=8;ctx.strokeStyle=th.accent+'33';ctx.lineWidth=8;
-      ctx.beginPath();ctx.arc(rx,ry,26,0,Math.PI*2);ctx.stroke();
-    }
+    ctx.shadowBlur=8;ctx.strokeStyle=th.accent+'33';ctx.lineWidth=8;
+    ctx.beginPath();ctx.arc(rx,ry,26,0,Math.PI*2);ctx.stroke();
     ctx.restore();
   }
 
   // Projectiles
   const tc=getTierColor();
   const projStyle=th.projStyle||'dart';
-  const pPerf=isPerfMode();
   projectiles.forEach(p=>{
     ctx.save();
     const angle=Math.atan2(p.vy,p.vx);ctx.translate(p.x,p.y);ctx.rotate(angle);
-    // Trailing glow line — skip in perf
-    if(!pPerf){
-      ctx.globalAlpha=.32;ctx.strokeStyle=tc;ctx.lineWidth=1.5+upg.projTier*.35;
-      ctx.shadowColor=tc;ctx.shadowBlur=6;
-      ctx.beginPath();ctx.moveTo(-20-upg.projTier*3,0);ctx.lineTo(0,0);ctx.stroke();
-    }
-    ctx.globalAlpha=1;
-    if(!pPerf){ctx.shadowBlur=9+upg.projTier*3;ctx.shadowColor=tc;}
-    ctx.fillStyle=tc;
+    ctx.globalAlpha=.32;ctx.strokeStyle=tc;ctx.lineWidth=1.5+upg.projTier*.35;
+    ctx.shadowColor=tc;ctx.shadowBlur=6;
+    ctx.beginPath();ctx.moveTo(-20-upg.projTier*3,0);ctx.lineTo(0,0);ctx.stroke();
+    ctx.globalAlpha=1;ctx.shadowBlur=9+upg.projTier*3;ctx.shadowColor=tc;ctx.fillStyle=tc;
     if(projStyle==='fry'){
       // Slightly elongated thin rectangle, like a fry
       ctx.fillRect(-2,-12+upg.projTier,4,12);
@@ -1431,18 +1400,15 @@ function render(){
     ctx.restore();
   });
 
-  // Particles — can be toggled off entirely for perf
-  if(particlesEnabled){
-    const pf=isPerfMode();
-    particles.forEach(p=>{
-      ctx.save();ctx.globalAlpha=clamp(p.life*2.5,0,1);
-      if(p.type==='flash'){if(!pf){ctx.shadowBlur=26;ctx.shadowColor=p.color;}ctx.fillStyle=p.color;ctx.globalAlpha*=.5;ctx.beginPath();ctx.arc(p.x,p.y,p.size*(1-p.life*.5+.1),0,Math.PI*2);ctx.fill();}
-      else if(p.type==='glow'){if(!pf){ctx.shadowBlur=13;ctx.shadowColor=p.color;}ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.size/2,0,Math.PI*2);ctx.fill();}
-      else if(p.type==='rect'){ctx.translate(p.x,p.y);ctx.rotate(p.rot+p.life*4);if(!pf){ctx.shadowBlur=7;ctx.shadowColor=p.color;}ctx.fillStyle=p.color;ctx.fillRect(-p.size/2,-p.size/3,p.size,p.size*.5);}
-      else{if(!pf){ctx.shadowBlur=4;ctx.shadowColor=p.color;}ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.size/2,0,Math.PI*2);ctx.fill();}
-      ctx.restore();
-    });
-  }
+  // Particles
+  particles.forEach(p=>{
+    ctx.save();ctx.globalAlpha=clamp(p.life*2.5,0,1);
+    if(p.type==='flash'){ctx.shadowBlur=26;ctx.shadowColor=p.color;ctx.fillStyle=p.color;ctx.globalAlpha*=.5;ctx.beginPath();ctx.arc(p.x,p.y,p.size*(1-p.life*.5+.1),0,Math.PI*2);ctx.fill();}
+    else if(p.type==='glow'){ctx.shadowBlur=13;ctx.shadowColor=p.color;ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.size/2,0,Math.PI*2);ctx.fill();}
+    else if(p.type==='rect'){ctx.translate(p.x,p.y);ctx.rotate(p.rot+p.life*4);ctx.shadowBlur=7;ctx.shadowColor=p.color;ctx.fillStyle=p.color;ctx.fillRect(-p.size/2,-p.size/3,p.size,p.size*.5);}
+    else{ctx.shadowBlur=4;ctx.shadowColor=p.color;ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.size/2,0,Math.PI*2);ctx.fill();}
+    ctx.restore();
+  });
 
   drawControls();
   drawHUD();
@@ -1472,30 +1438,30 @@ function drawShipAt(x,y,angle,alpha){
   const r=shard.radius,od=shard.overdriveMode;
   const th=T();
   const gc=od?'#ff4400':th.shipGlow,cc=od?'#ffaa00':th.shipCore;
-  const sp=isPerfMode();
   ctx.save();
-  if(!sp){const bl=ctx.createRadialGradient(0,0,r*.3,0,0,r*1.8);bl.addColorStop(0,od?'rgba(255,100,0,.13)':gc+'1c');bl.addColorStop(1,'transparent');ctx.fillStyle=bl;ctx.beginPath();ctx.arc(0,0,r*1.8,0,Math.PI*2);ctx.fill();}
-  ctx.restore();
-  ctx.save();if(!sp){ctx.shadowBlur=13;ctx.shadowColor=gc;}ctx.strokeStyle=gc;ctx.lineWidth=2.5;
+  const bl=ctx.createRadialGradient(0,0,r*.3,0,0,r*1.8);
+  bl.addColorStop(0,od?'rgba(255,100,0,.13)':gc+'1c');bl.addColorStop(1,'transparent');
+  ctx.fillStyle=bl;ctx.beginPath();ctx.arc(0,0,r*1.8,0,Math.PI*2);ctx.fill();ctx.restore();
+  ctx.save();ctx.shadowBlur=13;ctx.shadowColor=gc;ctx.strokeStyle=gc;ctx.lineWidth=2.5;
   ctx.beginPath();ctx.arc(0,0,r*.72,0,Math.PI*2);ctx.stroke();
   ctx.globalAlpha=.38;ctx.strokeStyle=cc;ctx.lineWidth=1;
   ctx.beginPath();ctx.arc(0,0,r*.52,0,Math.PI*2);ctx.stroke();ctx.restore();
-  ctx.save();if(!sp){ctx.shadowBlur=15;ctx.shadowColor=gc;}ctx.strokeStyle=gc;ctx.lineWidth=2.5;ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.save();ctx.shadowBlur=15;ctx.shadowColor=gc;ctx.strokeStyle=gc;ctx.lineWidth=2.5;ctx.lineCap='round';ctx.lineJoin='round';
   ctx.beginPath();ctx.moveTo(0,r*.72);ctx.lineTo(0,-r*1.6);ctx.stroke();
   ctx.beginPath();ctx.moveTo(0,-r*1.6);ctx.lineTo(-r*.37,-r*1.04);ctx.moveTo(0,-r*1.6);ctx.lineTo(r*.37,-r*1.04);ctx.stroke();
   ctx.globalAlpha=.65;ctx.beginPath();ctx.moveTo(-r*.72,0);ctx.lineTo(-r*.45,r*.6);ctx.moveTo(r*.72,0);ctx.lineTo(r*.45,r*.6);ctx.stroke();ctx.restore();
   ctx.save();
   const og=ctx.createRadialGradient(0,0,0,0,0,r*.38);
   og.addColorStop(0,'#fff');og.addColorStop(.4,cc);og.addColorStop(1,'transparent');
-  if(!sp){ctx.shadowBlur=18;ctx.shadowColor=cc;}ctx.fillStyle=og;
+  ctx.shadowBlur=18;ctx.shadowColor=cc;ctx.fillStyle=og;
   ctx.beginPath();ctx.arc(0,0,r*.38,0,Math.PI*2);ctx.fill();ctx.restore();
-  if(shard.overdriveMode){ctx.save();ctx.strokeStyle='rgba(255,160,0,.55)';ctx.lineWidth=2;if(!sp){ctx.shadowBlur=14;ctx.shadowColor='#ffaa00';}ctx.beginPath();ctx.arc(0,0,r+8,0,Math.PI*2);ctx.stroke();ctx.restore();}
+  if(shard.overdriveMode){ctx.save();ctx.strokeStyle='rgba(255,160,0,.55)';ctx.lineWidth=2;ctx.shadowBlur=14;ctx.shadowColor='#ffaa00';ctx.beginPath();ctx.arc(0,0,r+8,0,Math.PI*2);ctx.stroke();ctx.restore();}
   ctx.restore();
 }
 function drawEnemy(en){
   ctx.save();ctx.translate(en.x,en.y);
   const r=en.radius;
-  const perf=isPerfMode();
+  const perf=!!(T().perfMode);
   if(en.stunTimer>0||en.hitTimer>0){const s=1+Math.sin(en.hitTimer*30)*.1;ctx.scale(s,1/s);}
   if(!perf&&en.teleportGlow>0){ctx.shadowBlur=28*en.teleportGlow;ctx.shadowColor='#aa00ff';}
   ctx.rotate(en.wobble*.05+elapsed*(en.type==='bruteNgon'||en.type==='anchored'||en.type==='sentinelBrute'?.35:en.type==='skitter'?2:en.type==='spiralHunter'?(1.1+(1-clamp(en.hp/en.maxHp,0,1))*2.2):0.8));
@@ -1570,7 +1536,7 @@ function drawControls(){
   ctx.beginPath();ctx.arc(ax,ay,ar,0,Math.PI*2);ctx.fill();
   // Outer ring
   ctx.globalAlpha=.35;ctx.strokeStyle=th.accent;ctx.lineWidth=2;
-  if(!isPerfMode()){ctx.shadowBlur=8;ctx.shadowColor=th.accent;}
+  ctx.shadowBlur=8;ctx.shadowColor=th.accent;
   ctx.beginPath();ctx.arc(ax,ay,ar,0,Math.PI*2);ctx.stroke();
   // Middle ring
   ctx.shadowBlur=0;ctx.globalAlpha=.14;ctx.lineWidth=1;
