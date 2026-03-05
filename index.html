@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no,viewport-fit=cover">
-<title>Plasma Sheet Defense</title>
+<title>Plasma Defence</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
@@ -52,7 +52,7 @@ html,body{width:100%;height:100%;background:#04020f;overflow:hidden;touch-action
 #upgrade-pill-text{font-family:'Orbitron',sans-serif;font-size:clamp(.7rem,2.2vw,.88rem);font-weight:700;color:#00ff99;letter-spacing:2px;text-transform:uppercase;white-space:nowrap;text-shadow:0 0 10px rgba(0,255,153,.8)}
 @keyframes pillPulse{0%,100%{box-shadow:0 0 18px rgba(0,255,153,.5),0 0 6px rgba(0,255,153,.25) inset}50%{box-shadow:0 0 32px rgba(0,255,153,.85),0 0 10px rgba(0,255,153,.45) inset}}
 /* ── Landing page poster ────────────────────────────────────── */
-#landing-poster{position:absolute;inset:0;background:url('../assets/poster.png') center/cover no-repeat;z-index:0}
+#landing-poster{position:absolute;inset:0;background:url('assets/poster.png') center/cover no-repeat;z-index:0}
 #landing-content{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;width:100%;padding-bottom:60px;min-height:100%;background:linear-gradient(to top,rgba(4,2,15,.92) 0%,rgba(4,2,15,.55) 45%,transparent 75%)}
 #overlay{padding:0;align-items:stretch;justify-content:stretch}
 #overlay .ov-title{text-shadow:0 0 32px rgba(0,229,255,.9),0 2px 4px rgba(0,0,0,.8)}
@@ -117,11 +117,12 @@ html,body{width:100%;height:100%;background:#04020f;overflow:hidden;touch-action
 <div id="overlay" class="ov hidden">
   <div id="landing-poster"></div>
   <div id="landing-content">
-    <div class="ov-title" id="main-title">Plasma Sheet<br>Defence</div>
+    <div class="ov-title" id="main-title">Plasma<br>Defence</div>
     <div class="ov-sub" id="main-sub">Defend the tower · survive as long as you can</div>
     <div id="hs-list"></div>
     <button class="big-btn" id="play-btn">⚡ ENGAGE</button>
     <button id="share-btn" class="hidden">📤 SHARE SCORE</button>
+    <div style="font-family:'Share Tech Mono',monospace;font-size:.55rem;color:rgba(0,229,255,.28);letter-spacing:2px;margin-top:14px;text-transform:uppercase">Made by Roopam</div>
   </div>
 </div>
 

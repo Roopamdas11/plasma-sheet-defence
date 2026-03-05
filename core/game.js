@@ -119,6 +119,7 @@ let combo=1,comboTimer=0,lastKillTime=0;
 let upgradePendingCount=0;
 let aimAssistOn=true;
 let lastFinalScore=0,lastFinalTime=0;
+let _lastThemeBgPhase=-1;  // track bgPhase at last theme switch — change theme on level-up
 
 // ── TOWER ─────────────────────────────────────────────────────────────
 let tower={hp:100,maxHp:100,radius:28,regenTimer:0,hitFlash:0,healGlow:0};
@@ -132,7 +133,10 @@ function towerHeal(amount,enemyMass){
 
 // ── PLAYER ────────────────────────────────────────────────────────────
 let shard={
-  x:0,y:0,aimAngle:-Math.PI/2,aimLocked:false,autoAimGrace:0,
+  x:0,y:0,aimAngle:-Math.PI/2,
+  _aimTarget:-Math.PI/2,   // smooth target — written in update(), not pointer events
+  _joyDx:0,_joyDy:0,_joyMag:0,  // raw joystick delta from pointer events
+  aimLocked:false,autoAimGrace:0,
   fireCooldown:0,fireRate:0.55,radius:36,isDragged:false,
   trailX:[],trailY:[],hasPlasmaTrail:false,trailDmgMult:1,
   overdriveMode:false,overdriveTimer:0,
@@ -390,12 +394,16 @@ function updateEnemy(en,dt){
   const auraR=upg.slowAuraR||82;
   if(upg.slowAura&&dist(en.x,en.y,shard.x,shard.y)<auraR+en.radius) sm=0.38;
 
-  // Attract force — pulls weaker enemies toward ship
+  // Attract force — gravity well towards ship (stronger when closer)
   if(upg.attractForce&&en.mass<=3){
     const adx=shard.x-en.x,ady=shard.y-en.y,ad=Math.hypot(adx,ady)||1;
-    if(ad<200){
-      const str=(upg.attractStrength||40)*(1-ad/200)*0.003;
-      en.vx+=adx/ad*str;en.vy+=ady/ad*str;
+    const attractR=320;
+    if(ad<attractR){
+      // Gravity-like: acceleration scales inversely with distance
+      // Strong pull close up, diminishing at range — feels like a gravity well
+      const gravStr=Math.min((upg.attractStrength||40)*0.9/(ad*0.12+8),2.8);
+      en.vx+=(adx/ad)*gravStr;
+      en.vy+=(ady/ad)*gravStr;
     }
   }
 
@@ -763,18 +771,9 @@ function onPM(e){
     let dx=x-controls.aim.x,dy=y-controls.aim.y;
     const len=Math.hypot(dx,dy)||1,max=controls.aim.r*0.9,k=Math.min(1,max/len);
     dx*=k;dy*=k;controls.aim.dx=dx;controls.aim.dy=dy;
-    const mag=Math.hypot(dx,dy);
-    if(mag>8){
-      const manAngle=Math.atan2(dy,dx);
-      if(aimAssistOn){
-        const ne=nearestEnemy(shard.x,shard.y);
-        if(ne){
-          const autoAngle=Math.atan2(ne.y-shard.y,ne.x-shard.x);
-          const assistStr=clamp(1-(mag/(controls.aim.r*0.9))*0.85,0.05,0.45);
-          shard.aimAngle=lerpAngle(manAngle,autoAngle,assistStr);
-        }else shard.aimAngle=manAngle;
-      }else shard.aimAngle=manAngle;
-    }
+    // Only store raw delta — update() smoothly integrates this each fixed step
+    // NEVER write shard.aimAngle directly from pointer events (causes jitter)
+    shard._joyDx=dx;shard._joyDy=dy;shard._joyMag=Math.hypot(dx,dy);
     return;
   }
   if(controls.move.active&&e.pointerId===controls.move.pid){
@@ -788,6 +787,7 @@ function onPU(e){
   delete ptrs[e.pointerId];
   if(controls.aim.active&&e.pointerId===controls.aim.pid){
     controls.aim.active=false;controls.aim.pid=null;controls.aim.dx=0;controls.aim.dy=0;
+    shard._joyDx=0;shard._joyDy=0;shard._joyMag=0;
     shard.aimLocked=false;shard.autoAimGrace=0.25;
   }
   if(controls.move.active&&e.pointerId===controls.move.pid){
@@ -944,6 +944,16 @@ let accumulator=0;
 function update(dt){
   if(state!==S.PLAY)return;
   elapsed+=dt;waveStage=Math.floor(elapsed/30);
+  // Auto-theme: switch when bgPhase increases (i.e. a milestone / level-up fires)
+  // This means each new phase/level gets a fresh theme rather than a timed interrupt
+  if(!window.Tuning.isThemeLocked()&&bgPhase>_lastThemeBgPhase){
+    _lastThemeBgPhase=bgPhase;
+    const _brands=window.BrandEngine.getBrands().filter(b=>!b.hidden);
+    if(_brands.length>1){
+      const _ci=_brands.findIndex(b=>b.id===window.BrandEngine.getCurrentId());
+      window.BrandEngine.applyBrand(_brands[(_ci+1)%_brands.length].id);
+    }
+  }
   if(shake.t>0){shake.t-=dt;if(shake.t<=0){shake.x=0;shake.y=0;}}
   if(comboTimer>0)comboTimer-=dt;
   else if(elapsed-lastKillTime>2.0)combo=Math.max(1,combo-dt*0.5);
@@ -991,9 +1001,41 @@ function update(dt){
   });
   pulse.rings=pulse.rings.filter(r=>r.r<r.maxR);
   if(shard.autoAimGrace>0)shard.autoAimGrace-=dt;
-  if(!shard.aimLocked&&shard.autoAimGrace<=0){
-    const ne=nearestEnemy(shard.x,shard.y);
-    if(ne)shard.aimAngle=Math.atan2(ne.y-shard.y,ne.x-shard.x);
+
+  // ── AIM UPDATE (all in fixed timestep — never touched by pointer events) ──────
+  // Smooth factor: lerp speed ~14 rad/s gives crisp but glitch-free tracking
+  const AIM_SMOOTH = 14;
+  if(controls.aim.active){
+    // JOYSTICK HELD: compute manual angle from stored raw delta
+    const jMag = shard._joyMag;
+    const DEAD = 12; // px dead zone — ignore resting thumb pressure
+    if(jMag > DEAD){
+      const manAngle = Math.atan2(shard._joyDy, shard._joyDx);
+      let targetAngle = manAngle;
+      if(aimAssistOn){
+        const ne = nearestEnemy(shard.x, shard.y);
+        if(ne){
+          const autoAngle = Math.atan2(ne.y-shard.y, ne.x-shard.x);
+          // Light assist only — never snaps to enemy, just nudges
+          // Constant 12% blend: predictable, no magnitude jitter
+          targetAngle = lerpAngle(manAngle, autoAngle, 0.12);
+        }
+      }
+      shard._aimTarget = targetAngle;
+    }
+    // Smooth lerp toward target each fixed step
+    shard.aimAngle = lerpAngle(shard.aimAngle, shard._aimTarget, clamp(AIM_SMOOTH*dt, 0, 1));
+    shard.aimLocked = true;
+  } else {
+    // NO JOYSTICK: auto-aim toward nearest enemy (with grace period after release)
+    shard.aimLocked = false;
+    if(shard.autoAimGrace <= 0){
+      const ne = nearestEnemy(shard.x, shard.y);
+      if(ne){
+        const autoAngle = Math.atan2(ne.y-shard.y, ne.x-shard.x);
+        shard.aimAngle = lerpAngle(shard.aimAngle, autoAngle, clamp(AIM_SMOOTH*dt, 0, 1));
+      }
+    }
   }
   shard.fireCooldown-=dt;
   const holdFire=controls.aim.active;
@@ -1105,6 +1147,12 @@ function showHighScores(cur){
   el.innerHTML=h;
 }
 let _posterUrl=null,_snideText='';
+// Preload the landing poster so it can be embedded in the share card
+let _posterImgEl=null;
+(function preloadPosterImg(){
+  _posterImgEl=new Image();
+  _posterImgEl.src='assets/poster.png';
+})();
 function generatePoster(){
   const snide=SNIDE[Math.floor(rng()*SNIDE.length)];_snideText=snide;
   const oc=document.createElement('canvas');oc.width=1080;oc.height=1920;
@@ -1114,11 +1162,24 @@ function generatePoster(){
   g.addColorStop(0,bgs[Math.min(bgPhase,bgs.length-1)][0]);
   g.addColorStop(1,bgs[Math.min(bgPhase,bgs.length-1)][2]||bgs[0][2]);
   c.fillStyle=g;c.fillRect(0,0,1080,1920);
+  // Overlay the landing poster image as a moody background
+  if(_posterImgEl&&_posterImgEl.complete&&_posterImgEl.naturalWidth>0){
+    c.save();
+    c.globalAlpha=0.38;
+    const imgScale=Math.max(1080/_posterImgEl.naturalWidth,1920/_posterImgEl.naturalHeight);
+    const iw=_posterImgEl.naturalWidth*imgScale,ih=_posterImgEl.naturalHeight*imgScale;
+    c.drawImage(_posterImgEl,(1080-iw)/2,(1920-ih)/2,iw,ih);
+    c.restore();
+    // Re-apply dark gradient over it to keep text readable
+    const ov=c.createLinearGradient(0,0,0,1920);
+    ov.addColorStop(0,'rgba(4,2,15,0.55)');ov.addColorStop(0.55,'rgba(4,2,15,0.45)');ov.addColorStop(1,'rgba(4,2,15,0.80)');
+    c.fillStyle=ov;c.fillRect(0,0,1080,1920);
+  }
   c.strokeStyle='rgba(255,255,255,.05)';c.lineWidth=1;
   for(let x=0;x<1080;x+=60){c.beginPath();c.moveTo(x,0);c.lineTo(x,1920);c.stroke();}
   for(let y=0;y<1920;y+=60){c.beginPath();c.moveTo(0,y);c.lineTo(1080,y);c.stroke();}
   c.font='bold 72px Orbitron,sans-serif';c.fillStyle=t.accent;c.textAlign='center';
-  c.shadowColor=t.accent;c.shadowBlur=28;c.fillText('PLASMA SHEET',540,200);c.fillText('DEFENSE',540,290);c.shadowBlur=0;
+  c.shadowColor=t.accent;c.shadowBlur=28;c.fillText('PLASMA',540,200);c.fillText('DEFENCE',540,290);c.shadowBlur=0;
   c.strokeStyle='rgba(255,255,255,.2)';c.lineWidth=1;c.beginPath();c.moveTo(120,330);c.lineTo(960,330);c.stroke();
   c.font='bold 150px Orbitron,sans-serif';c.fillStyle='#fff';c.shadowColor=t.accent;c.shadowBlur=36;
   c.fillText(lastFinalScore.toString(),540,540);c.shadowBlur=0;
@@ -1132,6 +1193,7 @@ function generatePoster(){
   ws.forEach(w=>{const test=ln?ln+' '+w:w;if(c.measureText(test).width>mW){lns.push(ln);ln=w;}else ln=test;});lns.push(ln);
   lns.forEach((l,i)=>c.fillText(l,540,1450+i*50));
   c.font='28px Orbitron,sans-serif';c.fillStyle='rgba(0,229,255,.55)';c.fillText('pd1.rameing.com',540,1875);
+  c.font='22px Share Tech Mono,monospace';c.fillStyle='rgba(0,229,255,.28)';c.fillText('MADE BY ROOPAM',540,1905);
   return oc.toDataURL('image/png');
 }
 async function handleShare(){
@@ -1144,12 +1206,12 @@ async function handleShare(){
     'No downloads, just open and play. Great for a quick recharge 🎯',
   ];
   const invite=invites[Math.floor(rng()*invites.length)];
-  const caption=`${invite}\n\n🎮 Plasma Sheet Defense\n⚡ Score: ${lastFinalScore} · ${formatTime(lastFinalTime)} survived\n${_snideText}\n\n▶ Play free: https://pd1.rameing.com`;
+  const caption=`${invite}\n\n🎮 Plasma Defence\n⚡ Score: ${lastFinalScore} · ${formatTime(lastFinalTime)} survived\n${_snideText}\n\n▶ Play free: https://pd1.rameing.com`;
   try{
     const blob=await(await fetch(dataUrl)).blob();
     const file=new File([blob],'plasma.png',{type:'image/png'});
     if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){
-      await navigator.share({title:'Plasma Sheet Defense',text:caption,files:[file]});return;
+      await navigator.share({title:'Plasma Defence',text:caption,files:[file]});return;
     }
   }catch(e){}
   // Fallback: download poster + copy text
@@ -1166,7 +1228,7 @@ function startGame(){
   score=0;elapsed=0;waveStage=0;bgPhase=0;
   const _hp=Tuning.get("towerHp"); tower.hp=tower.maxHp=_hp;tower.hitFlash=0;tower.regenTimer=0;tower.healGlow=0;
   shard.x=W/2;shard.y=H*0.32;
-  shard.aimAngle=-Math.PI/2;shard.aimLocked=false;shard.autoAimGrace=0;
+  shard.aimAngle=-Math.PI/2;shard._aimTarget=-Math.PI/2;shard._joyDx=0;shard._joyDy=0;shard._joyMag=0;shard.aimLocked=false;shard.autoAimGrace=0;
   shard.fireCooldown=0;shard.fireRate=Tuning.get("playerFireRate");shard.isDragged=false;shard.hasPlasmaTrail=false;shard.trailDmgMult=1;
   shard.overdriveMode=false;shard.overdriveTimer=0;
   shard.trailX=[];shard.trailY=[];
@@ -1191,7 +1253,7 @@ function startGame(){
   combo=1;lastKillTime=0;
   bossEventsTriggered=new Set();bossActive=false;bossTimer=0;bossBannerTimer=0;bossSpawnTimer=0;
   musicIntensityBoost=0;dangerNearTowerCount=0;
-  _rngS=Date.now()&0xFFFFFFFF;_posterUrl=null;
+  _rngS=Date.now()&0xFFFFFFFF;_posterUrl=null;_lastThemeBgPhase=-1;
   state=S.PLAY;
   applyBrandCSS();
   document.getElementById('play-btn').textContent='RETRY';
@@ -1609,23 +1671,22 @@ function drawAimLine(){
   const th=T();
   const locked=shard.aimLocked;
   const lc=locked?'#ff3c78':th.accent;
-  const len=72+Math.sin(elapsed*6)*5;
+  const len=78;  // fixed length — no oscillation
   const ax=shard.x+Math.cos(shard.aimAngle)*len;
   const ay=shard.y+Math.sin(shard.aimAngle)*len;
   ctx.save();
 
-  // Pulsing dash line from ship to reticle
+  // Straight dash line from ship to reticle
   ctx.strokeStyle=locked?'rgba(255,60,120,.7)':th.accent+'88';
   ctx.lineWidth=2;ctx.setLineDash([6,6]);ctx.lineDashOffset=-elapsed*18;
   ctx.shadowColor=lc;ctx.shadowBlur=6;
   ctx.beginPath();ctx.moveTo(shard.x,shard.y);ctx.lineTo(ax,ay);ctx.stroke();
   ctx.setLineDash([]);ctx.shadowBlur=0;
 
-  // Reticle — two arcs forming a crosshair bracket
+  // Reticle — fixed-size crosshair bracket (no pulse oscillation)
   ctx.save();ctx.translate(ax,ay);ctx.rotate(shard.aimAngle);
-  const rc=12+Math.sin(elapsed*4)*1.5;  // pulsing radius
+  const rc=12;  // fixed radius — no sine wobble
   ctx.strokeStyle=lc;ctx.lineWidth=2.5;ctx.shadowColor=lc;ctx.shadowBlur=12;
-  // Four corner bracket arcs
   for(let q=0;q<4;q++){
     ctx.save();ctx.rotate(q*Math.PI/2);
     ctx.beginPath();ctx.arc(0,0,rc,-0.5,0.5);ctx.stroke();

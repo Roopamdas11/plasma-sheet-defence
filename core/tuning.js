@@ -110,7 +110,7 @@ window.Tuning = (function () {
       projectileDamageMult:1.00,
       ramDamageBase:       0.35,
       scoreMult:           1.00,
-      preferredBrand:      'mondelez',
+      preferredBrand:      'perf',
     },
     HARD: {
       label:               'HARD',

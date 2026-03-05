@@ -9,7 +9,7 @@ window.BrandEngine = (function () {
   // ── Internal registry ─────────────────────────────────────────────
   const _registry = new Map();       // id → validated brand object
   const _loadOrder = [];             // preserves insertion order for UI
-  let _currentId = 'default';
+  let _currentId = 'perf';
 
   // ── Public: called by brand files ─────────────────────────────────
   function registerBrand(raw) {
@@ -127,6 +127,7 @@ window.BrandEngine = (function () {
       const saved = localStorage.getItem('psd_brand');
       if (saved && _registry.has(saved)) _currentId = saved;
     } catch (_) {}
+    if (!_registry.has(_currentId)) _currentId = 'perf';
     if (!_registry.has(_currentId)) _currentId = 'default';
     if (!_registry.has(_currentId) && _loadOrder.length) _currentId = _loadOrder[0];
 
