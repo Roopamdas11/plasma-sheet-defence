@@ -159,6 +159,13 @@ html,body{width:100%;height:100%;background:#04020f;overflow:hidden;touch-action
     <button class="menu-tog on compact" id="assist-btn">AIM</button>
   </div>
 
+  <!-- Row 3b: Performance toggle -->
+  <div class="menu-section-label" style="margin-top:8px">PERFORMANCE</div>
+  <div class="menu-row">
+    <button class="menu-tog compact" id="ultra-btn" style="letter-spacing:.08em;min-width:120px">⚡ ULTRA</button>
+    <span style="font-family:'Share Tech Mono',monospace;font-size:.52rem;color:rgba(0,229,255,.38);line-height:1.4;text-align:left;max-width:140px;display:inline-block;padding-left:6px">Max FPS · less gfx · DPR×1</span>
+  </div>
+
   <!-- Row 4: Actions -->
   <div class="menu-row" style="margin-top:8px">
     <button class="big-btn" id="restart-btn" style="font-size:.72rem;padding:10px 20px;margin:0 4px">RESTART</button>
@@ -174,47 +181,8 @@ html,body{width:100%;height:100%;background:#04020f;overflow:hidden;touch-action
   <span id="upgrade-pill-text">⚡ UPGRADE AVAILABLE</span>
 </div>
 
-<div id="tutorial-overlay" class="hidden">
-  <!-- Glass panels overlaid on actual game positions -->
-  <div class="tut-glass tut-top-center" id="tut-title-panel">
-    <div class="tut-glass-title">HOW TO PLAY</div>
-    <div class="tut-glass-sub">protect the tower · survive as long as you can</div>
-  </div>
-
-  <!-- Bottom-left: joystick annotation -->
-  <div class="tut-glass tut-bottom-left" id="tut-joy-panel">
-    <div class="tut-glass-icon">🕹</div>
-    <div class="tut-glass-label">AIM &amp; FIRE</div>
-    <div class="tut-glass-desc">Drag joystick to aim,<br>auto-fires continuously</div>
-  </div>
-
-  <!-- Bottom-right: pulse annotation -->
-  <div class="tut-glass tut-bottom-right" id="tut-pulse-panel">
-    <div class="tut-glass-icon">◎</div>
-    <div class="tut-glass-label">SHOCKWAVE</div>
-    <div class="tut-glass-desc">Clears all nearby<br>enemies at once</div>
-  </div>
-
-  <!-- Center: move annotation -->
-  <div class="tut-glass tut-center" id="tut-move-panel">
-    <div class="tut-glass-icon">👆</div>
-    <div class="tut-glass-label">MOVE SHIP</div>
-    <div class="tut-glass-desc">Drag anywhere<br>on screen</div>
-  </div>
-
-  <!-- Top-right: pause annotation -->
-  <div class="tut-glass tut-top-right" id="tut-pause-panel">
-    <div class="tut-glass-label">⏸ PAUSE</div>
-  </div>
-
-  <!-- Top-center: upgrade annotation -->
-  <div class="tut-glass tut-top-pill" id="tut-upg-panel">
-    <div class="tut-glass-label">⚡ UPGRADE pill appears here</div>
-    <div class="tut-glass-desc">Tap when available to power up</div>
-  </div>
-
-  <button id="tut-skip-btn">GOT IT ⚡</button>
-</div>
+<!-- tutorial-overlay replaced by canvas-drawn tutorial in game.js -->
+<div id="tutorial-overlay" class="hidden"></div>
 
 <!--
   LOADING SEQUENCE
