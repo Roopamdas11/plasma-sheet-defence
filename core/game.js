@@ -852,8 +852,8 @@ function onPD(e){
   e.preventDefault();initAudio();
   ptrs[e.pointerId]={x:e.clientX,y:e.clientY};
   if(state!==S.PLAY)return;
-  // Tutorial tap-to-advance (doesn't block game input)
-  if(_tutActive)tutTap();
+  // Tutorial tap-to-advance — but only if NOT tapping the NEXT button zone (right 60px)
+  if(_tutActive && x < W-60)tutTap();
   const x=e.clientX,y=e.clientY;
 
   // Pulse button (bottom-right — checked before move fallback)
@@ -1580,9 +1580,8 @@ function render(){
 
   // ── Background fill — cached offscreen canvas (rebuilt only on phase/theme change)
   _renderBgCache(th,ph);
-  ctx.setTransform(1,0,0,1,shake.x,shake.y);  // identity for bitmap blit
+  // Draw bg offscreen canvas — DPR transform is active so W×H = full CSS screen
   ctx.drawImage(_bgOC,0,0,W,H);
-  ctx.setTransform(DPR,0,0,DPR,shake.x,shake.y);
 
   if(!ultraMode){
     // Nebula bloom — animated radial glow (skip in ultra mode)
@@ -1599,9 +1598,8 @@ function render(){
     _renderStarCache(ph);
     const twinkleAlpha=clamp(.85+Math.sin(plasmaT*0.7)*.12,0,1);
     ctx.save();ctx.globalAlpha=twinkleAlpha;
-    ctx.setTransform(1,0,0,1,shake.x,shake.y);
+    // DPR transform active — W×H = full CSS screen
     ctx.drawImage(_starOC,0,0,W,H);
-    ctx.setTransform(DPR,0,0,DPR,shake.x,shake.y);
     ctx.restore();
   } else {
     // Ultra: 20 plain dots, zero shadow
@@ -2390,63 +2388,67 @@ function _roundRect(c, x, y, w, h, r) {
 }
 
 
-// Tutorial HTML buttons: NEXT (right edge) + DON'T SHOW AGAIN (floating)
-// Created once, shown/hidden with visibility
-let _tutBtnContainer = null;
-function _tutInitButtons() {
-  if (_tutBtnContainer) return;
-  _tutBtnContainer = document.createElement('div');
-  _tutBtnContainer.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:35;';
+// ── Tutorial UI buttons ────────────────────────────────────────────────
+// Two separate fixed DOM elements — no container wrapper (simpler z-index).
+// Appended to body once; shown/hidden via display:block/none.
+let _tutNextBtn = null;
+let _tutNeverBtn = null;
 
-  // NEXT / DONE button — right edge, tall, easy to tap
-  const nextBtn = document.createElement('button');
-  nextBtn.id = 'tut-next-btn';
-  nextBtn.style.cssText = [
-    'position:absolute;right:0;top:50%;transform:translateY(-50%)',
-    'width:52px;height:120px;border-radius:12px 0 0 12px',
-    'background:rgba(0,229,255,.18);border:2px solid rgba(0,229,255,.7);border-right:none',
-    'color:#00e5ff;font-family:Orbitron,sans-serif;font-size:.6rem;font-weight:700',
-    'letter-spacing:2px;writing-mode:vertical-rl;text-orientation:mixed',
-    'pointer-events:all;cursor:pointer;-webkit-tap-highlight-color:transparent',
-    'box-shadow:-4px 0 20px rgba(0,229,255,.3)',
-    'display:flex;align-items:center;justify-content:center;padding:8px 0'
-  ].join(';');
-  nextBtn.textContent = 'NEXT ▶';
-  nextBtn.addEventListener('pointerdown', e => {
-    e.stopPropagation();
+function _tutInitButtons() {
+  if (_tutNextBtn) return;
+
+  // NEXT / DONE — right edge pill, tall thumb target
+  _tutNextBtn = document.createElement('button');
+  Object.assign(_tutNextBtn.style, {
+    position:'fixed', right:'0', top:'50%', transform:'translateY(-50%)',
+    width:'54px', height:'130px', borderRadius:'14px 0 0 14px',
+    background:'rgba(0,229,255,.22)', border:'2px solid rgba(0,229,255,.8)',
+    borderRight:'none', color:'#00e5ff',
+    fontFamily:"Orbitron,sans-serif", fontSize:'.58rem', fontWeight:'700',
+    letterSpacing:'2px', writingMode:'vertical-rl',
+    display:'none', alignItems:'center', justifyContent:'center',
+    cursor:'pointer', zIndex:'50', touchAction:'none',
+    boxShadow:'-4px 0 24px rgba(0,229,255,.35)',
+    WebkitTapHighlightColor:'transparent', padding:'0',
+  });
+  _tutNextBtn.style.display = 'none';  // hidden initially
+  _tutNextBtn.textContent = 'NEXT ▶';
+  _tutNextBtn.addEventListener('pointerdown', e => {
+    e.preventDefault(); e.stopPropagation();
     tutTap();
   });
+  document.body.appendChild(_tutNextBtn);
 
-  // DON'T SHOW AGAIN — small, bottom-left
-  const neverBtn = document.createElement('button');
-  neverBtn.id = 'tut-never-btn';
-  neverBtn.style.cssText = [
-    'position:absolute;left:10px;bottom:10px',
-    'background:rgba(0,0,0,.45);border:1.5px solid rgba(0,229,255,.25)',
-    'border-radius:8px;color:rgba(0,229,255,.55)',
-    'font-family:"Share Tech Mono",monospace;font-size:.55rem;letter-spacing:1.5px',
-    'padding:8px 12px;pointer-events:all;cursor:pointer;-webkit-tap-highlight-color:transparent'
-  ].join(';');
-  neverBtn.textContent = "DON'T SHOW AGAIN";
-  neverBtn.addEventListener('pointerdown', e => {
-    e.stopPropagation();
-    tutSkip(true);  // persist neverShow flag
+  // DON'T SHOW AGAIN — bottom centre, wide button
+  _tutNeverBtn = document.createElement('button');
+  Object.assign(_tutNeverBtn.style, {
+    position:'fixed', bottom:'80px', left:'50%', transform:'translateX(-50%)',
+    background:'rgba(4,2,20,.85)', border:'1.5px solid rgba(0,229,255,.4)',
+    borderRadius:'8px', color:'rgba(0,229,255,.75)',
+    fontFamily:'"Share Tech Mono",monospace', fontSize:'.62rem', letterSpacing:'1.5px',
+    padding:'11px 20px', cursor:'pointer', zIndex:'50', touchAction:'none',
+    whiteSpace:'nowrap', WebkitTapHighlightColor:'transparent',
+    display:'none',
   });
-
-  _tutBtnContainer.appendChild(nextBtn);
-  _tutBtnContainer.appendChild(neverBtn);
-  document.body.appendChild(_tutBtnContainer);
+  _tutNeverBtn.textContent = "✕  DON'T SHOW AGAIN";
+  _tutNeverBtn.addEventListener('pointerdown', e => {
+    e.preventDefault(); e.stopPropagation();
+    tutSkip(true);
+  });
+  document.body.appendChild(_tutNeverBtn);
 }
+
 function _tutShowButtons(alpha) {
   _tutInitButtons();
-  const v = alpha > 0.05 ? 'visible' : 'hidden';
-  _tutBtnContainer.style.visibility = v;
-  // Update NEXT button label on last step
-  const nb = document.getElementById('tut-next-btn');
-  if (nb) nb.textContent = (_tutStep >= _tutSteps.length - 1) ? 'DONE ✓' : 'NEXT ▶';
+  const show = alpha > 0.05;
+  _tutNextBtn.style.display  = show ? 'flex' : 'none';
+  _tutNeverBtn.style.display = show ? 'block' : 'none';
+  _tutNextBtn.textContent = (_tutStep >= _tutSteps.length - 1) ? 'DONE ✓' : 'NEXT ▶';
 }
+
 function _tutHideButtons() {
-  if (_tutBtnContainer) _tutBtnContainer.style.visibility = 'hidden';
+  if (_tutNextBtn)  _tutNextBtn.style.display  = 'none';
+  if (_tutNeverBtn) _tutNeverBtn.style.display = 'none';
 }
 
 function drawTutorial() {
