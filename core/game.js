@@ -189,7 +189,7 @@ let upg={
   stackCounts:{},  // tracks stacks per upgrade id
 };
 const MAX_STACK=5;
-const MILESTONES=[100,300,600,1000,1600,2500,3800,5500,7500,10000];
+const MILESTONES=[300,900,1800,3000,4800,7500,11400,16500,22500,30000,40000,55000,75000,100000,135000];
 let milestonesHit=new Set();
 let upgradeFlash={text:'',timer:0};
 
