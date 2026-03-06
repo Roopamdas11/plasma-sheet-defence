@@ -304,8 +304,13 @@ function gaussW(s,g){
   const sig=g.sigma*(1+0.12*Math.min(1,s/5000));
   return g.fw+g.bw*Math.exp(-Math.pow(s-g.peak,2)/(2*sig*sig));
 }
-function getThreat(){return elapsed*0.018+score*0.00045;}
-function getThreat2(){return Math.pow(getThreat(),1.35);}
+// Threat = combined function of time + score
+// getThreat2() drives all scaling; it grows unbounded so game gets harder forever
+function getThreat(){return elapsed*0.022+score*0.00055;}
+function getThreat2(){return Math.pow(getThreat(),1.45);}
+
+// Radius scale: enemies grow visually over time — capped at 3× base radius
+function getRadiusMult(){return Math.min(1+getThreat2()*0.012, 3.0);}
 
 let spawnTimer=2.0;
 let recentKills=[];
@@ -318,15 +323,32 @@ let safetyValveTimer=0;
 function getSpawnInterval(){
   const t2=getThreat2();
   const mn=_tc.spawnIntervalMin, mx=_tc.spawnIntervalMax;
-  let iv=clamp((mx-0.08*t2)*Tuning.get('spawnIntervalMult'),mn,mx);
+  // Spawn interval shrinks linearly then stays near minimum
+  let iv=clamp((mx-0.10*t2)*Tuning.get('spawnIntervalMult'),mn,mx);
   if(bossActive)iv*=2.1;
   if(pacingBoost)iv*=0.84;
   if(safetyValveTimer>0)iv*=1.35;
   return iv;
 }
-function getEnemyCap(){return Math.floor(clamp((_tc.enemyCapMin+2.8*getThreat2())*Tuning.get('enemyCapMult'),_tc.enemyCapMin,_tc.enemyCapMax));}
-function getHpMult(){return clamp(1+0.03*getThreat2(),1,3.2);}
-function getSpdMult(){return clamp(1+0.015*getThreat2(),1,2.2);}
+// Enemy cap rises without a hard ceiling after t2 > 20
+function getEnemyCap(){
+  const t2=getThreat2();
+  const raw=(_tc.enemyCapMin+3.5*t2)*Tuning.get('enemyCapMult');
+  // No hard cap — allow up to 120 at extreme threat
+  return Math.floor(clamp(raw,_tc.enemyCapMin,120));
+}
+// HP grows without a hard ceiling — large enemies become bullet sponges
+function getHpMult(){
+  const t2=getThreat2();
+  // Linear growth: +4% per t2 unit, no cap
+  return Math.max(1, 1+0.04*t2);
+}
+// Speed grows without hard ceiling — late game enemies are alarmingly fast
+function getSpdMult(){
+  const t2=getThreat2();
+  // Starts gentle, accelerates — by score 5000 enemies are ~3× speed
+  return Math.max(1, 1+0.022*t2);
+}
 
 function pickEnemyType(){
   const types=Object.keys(GAUSS_DEFS).filter(k=>score>=GAUSS_DEFS[k].unlock&&EDEFS[k]);
@@ -339,20 +361,22 @@ function pickEnemyType(){
 
 // ── ENEMY DEFS ────────────────────────────────────────────────────────
 const EDEFS={
-  runner:       {color:'#ff4488',radius:12, hp:2,   speed:65, reward:5,  shape:'tri',     sides:3, extraDmg:0, mass:1},
-  splitter:     {color:'#cc44ff',radius:15, hp:5,   speed:48, reward:10, shape:'circ',    sides:0, extraDmg:0, mass:1.5},
-  leech:        {color:'#ff6633',radius:14, hp:3,   speed:55, reward:8,  shape:'diamond', sides:4, extraDmg:2, mass:2},
-  tank:         {color:'#ff8c00',radius:21, hp:10,  speed:28, reward:15, shape:'hex',     sides:6, extraDmg:0, mass:5},
-  skitter:      {color:'#ffee00',radius:9,  hp:2,   speed:95, reward:6,  shape:'tri',     sides:3, extraDmg:0, mass:0.6},
-  dodger:       {color:'#00ffaa',radius:15, hp:4,   speed:52, reward:12, shape:'tri',     sides:3, extraDmg:0, mass:1.2},
-  bruteNgon:    {color:'#ff3300',radius:27, hp:20,  speed:20, reward:25, shape:'ngon',    sides:9, extraDmg:1, mass:8},
-  anchored:     {color:'#aaaaff',radius:24, hp:28,  speed:16, reward:30, shape:'ngon',    sides:8, extraDmg:2, mass:25},
-  shielded:     {color:'#44ddff',radius:18, hp:6,   speed:38, reward:18, shape:'hex',     sides:6, extraDmg:0, mass:3},
-  exploder:     {color:'#ff4400',radius:17, hp:4,   speed:44, reward:14, shape:'circ',    sides:0, extraDmg:0, mass:2},
-  healer:       {color:'#44ff88',radius:15, hp:5,   speed:32, reward:20, shape:'diamond', sides:4, extraDmg:0, mass:1.5},
-  sentinelBrute:{color:'#ff2200',radius:42, hp:95,  speed:14, reward:80, shape:'ngon',    sides:12,extraDmg:3, mass:20},
-  phaseDodger:  {color:'#aa00ff',radius:24, hp:55,  speed:40, reward:70, shape:'tri',     sides:3, extraDmg:1, mass:4},
-  spiralHunter: {color:'#ff55ff',radius:17, hp:8,   speed:76, reward:28, shape:'ngon',    sides:5, extraDmg:0, mass:2.5},
+  // Small / fast units — hp unchanged, speed boosted slightly
+  runner:       {color:'#ff4488',radius:12, hp:2,   speed:70,  reward:5,  shape:'tri',     sides:3, extraDmg:0, mass:1},
+  splitter:     {color:'#cc44ff',radius:15, hp:5,   speed:52,  reward:10, shape:'circ',    sides:0, extraDmg:0, mass:1.5},
+  leech:        {color:'#ff6633',radius:14, hp:3,   speed:60,  reward:8,  shape:'diamond', sides:4, extraDmg:2, mass:2},
+  skitter:      {color:'#ffee00',radius:9,  hp:2,   speed:110, reward:6,  shape:'tri',     sides:3, extraDmg:0, mass:0.6},
+  dodger:       {color:'#00ffaa',radius:15, hp:4,   speed:58,  reward:12, shape:'tri',     sides:3, extraDmg:0, mass:1.2},
+  shielded:     {color:'#44ddff',radius:18, hp:8,   speed:40,  reward:18, shape:'hex',     sides:6, extraDmg:0, mass:3},
+  exploder:     {color:'#ff4400',radius:17, hp:5,   speed:48,  reward:14, shape:'circ',    sides:0, extraDmg:0, mass:2},
+  healer:       {color:'#44ff88',radius:15, hp:6,   speed:34,  reward:20, shape:'diamond', sides:4, extraDmg:0, mass:1.5},
+  spiralHunter: {color:'#ff55ff',radius:17, hp:10,  speed:82,  reward:28, shape:'ngon',    sides:5, extraDmg:0, mass:2.5},
+  // LARGE enemies — 3× hp from original values
+  tank:         {color:'#ff8c00',radius:22, hp:30,  speed:28,  reward:22, shape:'hex',     sides:6, extraDmg:1, mass:5},
+  bruteNgon:    {color:'#ff3300',radius:29, hp:60,  speed:22,  reward:35, shape:'ngon',    sides:9, extraDmg:1, mass:8},
+  anchored:     {color:'#aaaaff',radius:26, hp:84,  speed:16,  reward:42, shape:'ngon',    sides:8, extraDmg:2, mass:25},
+  sentinelBrute:{color:'#ff2200',radius:44, hp:285, speed:15,  reward:100,shape:'ngon',    sides:12,extraDmg:3, mass:20},
+  phaseDodger:  {color:'#aa00ff',radius:24, hp:165, speed:44,  reward:85, shape:'tri',     sides:3, extraDmg:1, mass:4},
 };
 
 let enemies=[],enemyId=0;
@@ -366,12 +390,12 @@ function makeEnemy(type,ex,ey){
   // Apply brand color overrides
   const co=T().enemyColorOverrides||{};
   const color=co[type]||d.color;
-  return{
+  const en={
     id:enemyId++,type,isBoss:false,
     x:ex,y:ey,vx:0,vy:0,
     hp:d.hp*hm,maxHp:d.hp*hm,
     hitTimer:0,stunTimer:0,flashTimer:0,wobble:rng()*Math.PI*2,
-    color,radius:d.radius+(type==='bruteNgon'?Math.floor(t2*0.35):0),
+    color,radius:Math.round(d.radius*getRadiusMult()+(type==='bruteNgon'?t2*0.35:0)),
     speed:d.speed*sm,reward:d.reward,shape:d.shape,sides,
     extraDmg:d.extraDmg,mass:d.mass+(type==='bruteNgon'?t2*0.18:0),
     _rm:false,dodgeCd:0,zigTimer:rng()*0.8,zigDir:rng()>.5?1:-1,
@@ -389,6 +413,18 @@ function makeEnemy(type,ex,ey){
     iqMode: 'direct',           // 'direct'|'arc'|'flank'|'hold'
     iqTimer: rng()*1.5,         // time left in this AI mode
   };
+  // Super-fast 'blitz' variant — appears ~15% of the time at threat2 > 2
+  // Small enemies only (runners, skitters, dodgers, spiralHunters)
+  const _blitzTypes=['runner','skitter','dodger','spiralHunter','leech'];
+  if(t2>2 && _blitzTypes.includes(type) && rng()<clamp(0.08+t2*0.012,0,0.35)){
+    const blitzMult=1.8+rng()*0.7;  // 1.8–2.5× speed
+    en.speed*=blitzMult;
+    en.radius=Math.max(6,Math.round(en.radius*0.75));  // smaller = harder to hit
+    en.color='#ffffff';  // white flash = visual warning
+    en.blitz=true;
+    en.hp*=0.6;  // brittle — one or two darts kills it
+  }
+  return en;
 }
 function spawnEnemy(){
   if(enemies.filter(e=>!e._rm).length>=getEnemyCap())return;
@@ -615,7 +651,9 @@ function updateEnemy(en,dt){
   en.wobble+=dt*2.5;
 
   if(dist(en.x,en.y,towerX,towerY)<tower.radius+en.radius){
-    tower.hp-=_tc.enemyTowerDmgBase+en.extraDmg;tower.hitFlash=0.3;
+    // Tower damage scales up with threat — late game each hit is devastating
+    const _towerDmgMult=Math.max(1, 1+getThreat2()*0.04);
+    tower.hp-=(_tc.enemyTowerDmgBase+en.extraDmg)*_towerDmgMult;tower.hitFlash=0.3;
     shake.x=(rng()-.5)*6;shake.y=(rng()-.5)*6;shake.t=0.12;
     tone(80,0.18,'sawtooth',0.2);
     if(en.type==='splitter')doSplit(en);
@@ -852,9 +890,9 @@ function onPD(e){
   e.preventDefault();initAudio();
   ptrs[e.pointerId]={x:e.clientX,y:e.clientY};
   if(state!==S.PLAY)return;
-  // Tutorial tap-to-advance — but only if NOT tapping the NEXT button zone (right 60px)
-  if(_tutActive && x < W-60)tutTap();
   const x=e.clientX,y=e.clientY;
+  // During tutorial: NEXT button (right 60px edge) advances step — all other game input works normally
+  if(_tutActive && x >= W-60){ tutTap(); return; }
 
   // Pulse button (bottom-right — checked before move fallback)
   if(inCircle(x,y,controls.pulse.x,controls.pulse.y,controls.pulse.r*1.2)){
@@ -1211,12 +1249,15 @@ function update(dt){
     shard.aimLocked = true;
   } else {
     // NO JOYSTICK: auto-aim toward nearest enemy (with grace period after release)
+    // At high threat the auto-aim speed degrades so the player must engage manually
     shard.aimLocked = false;
     if(shard.autoAimGrace <= 0){
       const ne = nearestEnemy(shard.x, shard.y);
       if(ne){
         const autoAngle = Math.atan2(ne.y-shard.y, ne.x-shard.x);
-        shard.aimAngle = lerpAngle(shard.aimAngle, autoAngle, clamp(AIM_SMOOTH*dt, 0, 1));
+        // Auto-aim sluggishness grows with threat: at t2=20 it's 40% as fast
+        const autoSlug = clamp(1 - getThreat2()*0.03, 0.25, 1.0);
+        shard.aimAngle = lerpAngle(shard.aimAngle, autoAngle, clamp(AIM_SMOOTH*autoSlug*dt, 0, 1));
       }
     }
   }
@@ -1875,6 +1916,15 @@ function drawEnemy(en){
     ctx.fillStyle=en.color;ctx.fillRect(-bw/2,-r-9,bw*(en.hp/en.maxHp),4);
   }
   // Red flash on hit
+  // Blitz enemy: extra white outer ring to visually signal speed
+  if(en.blitz&&!perf){
+    ctx.save();
+    ctx.strokeStyle='rgba(255,255,255,0.85)';
+    ctx.lineWidth=2;
+    ctx.shadowBlur=14;ctx.shadowColor='#ffffff';
+    ctx.beginPath();ctx.arc(0,0,r*1.55,0,Math.PI*2);ctx.stroke();
+    ctx.restore();
+  }
   if(en.flashTimer>0){
     ctx.save();
     ctx.globalAlpha=en.flashTimer*0.78;

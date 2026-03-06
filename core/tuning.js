@@ -52,32 +52,32 @@ window.Tuning = (function () {
     pulseKillRechargeMax: 0.12,  // maximum CD reduction per kill
 
     // Enemy → tower damage
-    enemyTowerDmgBase:   5,      // HP lost when enemy reaches tower
+    enemyTowerDmgBase:   7,      // HP lost when enemy reaches tower
     exploderTowerDmg:    8,      // extra HP lost on exploder burst
 
     // Spawn director hard limits (difficulty only multiplies within these)
-    spawnIntervalMin:    0.28,   // fastest spawn gap (s)
+    spawnIntervalMin:    0.18,   // fastest spawn gap (s) — late game is frenetic
     spawnIntervalMax:    1.45,   // slowest spawn gap (s)
     enemyCapMin:         18,     // minimum live enemy cap
-    enemyCapMax:         65,     // maximum live enemy cap
+    enemyCapMax:         90,     // maximum live enemy cap (getEnemyCap allows 120)
 
     // Boss
-    bossThresholds:      [1800, 3600, 6000],
+    bossThresholds:      [1200, 2500, 4200, 6500, 9500],
     bossTimer:           30,
   };
 
   // ── SAFE BOUNDS for preset overrides ─────────────────────────────────
   const BOUNDS = {
-    towerHp:              [10,  600],
-    towerRegenAmount:     [0,   2  ],
-    enemyHpMult:          [0.1, 8  ],
-    enemySpeedMult:       [0.1, 4  ],
-    spawnIntervalMult:    [0.1, 5  ],
-    enemyCapMult:         [0.1, 4  ],
-    pulseCooldownMult:    [0.1, 4  ],
-    projectileDamageMult: [0.1, 10 ],
-    ramDamageBase:        [0,   5  ],
-    scoreMult:            [0,   20 ],
+    towerHp:              [10,  600 ],
+    towerRegenAmount:     [0,   2   ],
+    enemyHpMult:          [0.1, 20  ],  // allow deep scaling
+    enemySpeedMult:       [0.1, 8   ],  // allow deep scaling
+    spawnIntervalMult:    [0.05,5   ],
+    enemyCapMult:         [0.1, 6   ],
+    pulseCooldownMult:    [0.1, 4   ],
+    projectileDamageMult: [0.1, 10  ],
+    ramDamageBase:        [0,   5   ],
+    scoreMult:            [0,   20  ],
   };
 
   // ── DIFFICULTY PRESETS ────────────────────────────────────────────────
